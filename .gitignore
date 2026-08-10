@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+
+# 사용자 사진과 결과물은 저장소에 넣지 않는다
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+tests/synthetic/

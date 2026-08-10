@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+opencv-contrib-python
+numpy
+Pillow
+pillow-heif
+img2pdf
+python-multipart
+pygrabber

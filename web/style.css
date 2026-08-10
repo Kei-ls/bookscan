@@ -1,0 +1,239 @@
+:root {
+  --bg: #14161a;
+  --panel: #1c1f26;
+  --panel-2: #232733;
+  --line: #2f3542;
+  --text: #e7eaf0;
+  --muted: #9aa3b2;
+  --accent: #5b9cff;
+  --accent-ink: #0d1220;
+  --good: #4cc38a;
+  --warn: #e5a13a;
+  --bad: #e5674a;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+/* .overlay/.dropzone의 display:flex가 브라우저 기본 [hidden] 규칙을 이겨버려서
+   패널이 처음부터 다 보이는 문제를 막는다. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 13px;
+  cursor: pointer;
+}
+button:hover { background: #2c3140; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover { filter: brightness(1.08); }
+button.ghost { background: transparent; }
+button.big { padding: 12px 28px; font-size: 15px; }
+
+input[type=text], select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 10px;
+}
+input[type=text]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+
+.mono { font-family: Consolas, monospace; color: var(--muted); }
+.hint { color: var(--muted); font-size: 12.5px; margin: 6px 0 0; }
+.hint.small { font-size: 12px; }
+
+/* ---------------------------------------------------------------- topbar */
+.topbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; z-index: 20;
+}
+.brand { font-weight: 700; font-size: 16px; letter-spacing: .3px; }
+.topbar .project { display: flex; align-items: center; gap: 7px; }
+.topbar .project label { color: var(--muted); font-size: 12.5px; }
+.spacer { flex: 1; }
+
+/* ---------------------------------------------------------------- import */
+main { padding: 16px; }
+.importbar {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 16px;
+}
+.row { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.row.center { justify-content: center; }
+.importbar input[type=text] { flex: 1; min-width: 240px; }
+.or { color: var(--muted); font-size: 12.5px; }
+
+.progress { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.progress .bar { flex: 1; height: 6px; background: var(--panel-2); border-radius: 4px; overflow: hidden; }
+.progress .fill { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+.progress .label { color: var(--muted); font-size: 12.5px; min-width: 190px; }
+
+/* ---------------------------------------------------------------- grid */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
+  gap: 14px;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  cursor: grab;
+  position: relative;
+  transition: border-color .15s, transform .15s;
+}
+.card:hover { border-color: var(--accent); }
+.card.dragging { opacity: .4; }
+.card.dropbefore { box-shadow: -3px 0 0 var(--accent); }
+.card.dropafter { box-shadow: 3px 0 0 var(--accent); }
+.card .thumb {
+  width: 100%; aspect-ratio: 3/4; object-fit: contain;
+  background: #0e1014; display: block;
+}
+.card .meta {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 9px; border-top: 1px solid var(--line);
+}
+.card .num { font-weight: 700; font-size: 12.5px; }
+.card .name {
+  color: var(--muted); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1;
+}
+.card .badge {
+  position: absolute; top: 7px; left: 7px;
+  background: var(--warn); color: #1a1205;
+  font-size: 11px; font-weight: 700;
+  padding: 2px 7px; border-radius: 20px;
+}
+.card .half {
+  position: absolute; top: 7px; right: 7px;
+  background: rgba(0,0,0,.66); color: #fff;
+  font-size: 10.5px; padding: 2px 6px; border-radius: 20px;
+}
+.card .tools {
+  position: absolute; bottom: 40px; right: 7px;
+  display: flex; gap: 5px; opacity: 0; transition: opacity .15s;
+}
+.card:hover .tools { opacity: 1; }
+.card .tools button {
+  padding: 4px 8px; font-size: 12px;
+  background: rgba(20,22,26,.92);
+}
+
+.empty { text-align: center; color: var(--muted); padding: 60px 20px; }
+.empty p { margin: 6px 0; }
+
+/* ---------------------------------------------------------------- overlay */
+.overlay {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(8,9,12,.72);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  width: 100%; max-height: 100%;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.editor-panel { max-width: 1280px; }
+.camera-panel { max-width: 900px; }
+.small-panel { max-width: 440px; }
+.panel > header {
+  display: flex; align-items: center;
+  padding: 12px 16px; border-bottom: 1px solid var(--line);
+}
+.panel > header h2 { margin: 0; font-size: 15px; flex: 1; }
+.close { background: transparent; border: none; font-size: 16px; color: var(--muted); }
+
+.editor-body { display: flex; gap: 16px; padding: 16px; overflow: auto; }
+.canvas-wrap { flex: 1.25; min-width: 0; display: flex; flex-direction: column; align-items: center; }
+#cornerCanvas {
+  max-width: 100%; background: #0e1014;
+  border: 1px solid var(--line); border-radius: 8px;
+  touch-action: none; cursor: crosshair;
+}
+.editor-side {
+  flex: 1; min-width: 290px; max-width: 360px;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; padding-right: 4px;
+}
+/* 세로로 꽉 차면 flex가 항목들을 눌러버려서 메모 상자가 잘린다. 못 줄이게 막는다. */
+.editor-side > * { flex: 0 0 auto; }
+.preview {
+  width: 100%; height: 220px; object-fit: contain;
+  background: #0e1014; border: 1px solid var(--line); border-radius: 8px;
+}
+.notes {
+  background: var(--panel-2); border-radius: 8px; padding: 8px 10px;
+  font-size: 12px; color: var(--muted); white-space: pre-wrap;
+  line-height: 1.55; max-height: 120px; overflow-y: auto;
+}
+.notes:empty { display: none; }
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 12.5px; color: var(--muted); }
+.field label.check { display: flex; align-items: center; gap: 7px; color: var(--text); font-size: 13.5px; }
+.btns { display: flex; gap: 6px; }
+.seg { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { flex: 1; border: none; border-radius: 0; background: transparent; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.editor-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 4px; }
+
+/* ---------------------------------------------------------------- camera */
+.camera-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow: auto; }
+.camera-body .stage {
+  position: relative; background: #0e1014;
+  border: 1px solid var(--line); border-radius: 8px;
+  min-height: 320px; display: flex; align-items: center; justify-content: center;
+}
+#cameraView { max-width: 100%; max-height: 58vh; display: none; }
+#cameraView.on { display: block; }
+.placeholder { color: var(--muted); font-size: 13px; padding: 40px; text-align: center; }
+
+.pdf-body { padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.pdf-body input[type=text], .pdf-body select { width: 100%; }
+
+/* ---------------------------------------------------------------- misc */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  background: var(--panel-2); border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  padding: 11px 18px; border-radius: 8px; z-index: 60;
+  box-shadow: 0 8px 24px rgba(0,0,0,.4); max-width: 80vw;
+}
+.toast.bad { border-left-color: var(--bad); }
+.toast.good { border-left-color: var(--good); }
+
+.dropzone {
+  position: fixed; inset: 0; z-index: 70;
+  background: rgba(11,13,17,.86);
+  border: 3px dashed var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 19px; color: var(--accent);
+}
