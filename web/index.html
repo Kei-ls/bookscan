@@ -31,6 +31,11 @@
       <span class="or">또는</span>
       <button id="pickFiles">파일 선택</button>
       <input id="fileInput" type="file" accept="image/*" multiple hidden>
+      <div class="spacer"></div>
+      <button id="rotateAll" class="ghost"
+              title="글줄 방향(가로/세로)은 자동으로 맞지만 상하는 자동 판별하지 않습니다. 한 번에 찍은 사진은 상하가 모두 같으므로 전체를 한 번에 뒤집습니다.">
+        전체 180° 뒤집기
+      </button>
     </div>
     <div id="progress" class="progress" hidden>
       <div class="bar"><div class="fill"></div></div>
@@ -73,11 +78,16 @@
 
         <div class="field">
           <label>회전</label>
+          <label class="check">
+            <input id="autoRotateToggle" type="checkbox"> 자동 회전 (글줄이 가로로 눕게)
+          </label>
           <div class="btns">
             <button data-rotate="-90">↶ 90°</button>
             <button data-rotate="90">↷ 90°</button>
             <button data-rotate="180">180°</button>
           </div>
+          <p class="hint small">자동 회전은 축(가로/세로)만 맞춥니다. 상하가 뒤집혔으면
+            180°를 누르거나, 목록 위의 <b>전체 180° 뒤집기</b>로 한꺼번에 처리하세요.</p>
         </div>
 
         <div class="field">

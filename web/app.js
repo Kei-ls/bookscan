@@ -178,6 +178,7 @@ function syncControls() {
     b.classList.toggle("on", b.dataset.mode === st.mode));
   document.querySelectorAll("#spreadSeg button").forEach((b) =>
     b.classList.toggle("on", b.dataset.spread === st.spread));
+  $("#autoRotateToggle").checked = st.auto_rotate !== false;
   $("#dewarpToggle").checked = !!st.dewarp;
   $("#brightRange").value = st.brightness || 0;
   $("#brightVal").textContent = st.brightness || 0;
@@ -281,6 +282,9 @@ document.querySelectorAll("[data-rotate]").forEach((b) => b.onclick = () => {
   st.rotate = ((st.rotate || 0) + parseInt(b.dataset.rotate, 10) + 360) % 360;
   toast(`회전 ${st.rotate}° — 적용을 눌러야 반영됩니다`);
 });
+$("#autoRotateToggle").onchange = (e) => {
+  state.editing.settings.auto_rotate = e.target.checked;
+};
 $("#dewarpToggle").onchange = (e) => { state.editing.settings.dewarp = e.target.checked; };
 $("#brightRange").oninput = (e) => {
   state.editing.settings.brightness = +e.target.value; $("#brightVal").textContent = e.target.value;
@@ -321,7 +325,7 @@ $("#applyEdit").onclick = async () => {
       method: "POST",
       body: JSON.stringify({
         corners: state.editing.corners.length === 4 ? state.editing.corners : null,
-        mode: st.mode, rotate: st.rotate, dewarp: st.dewarp,
+        mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate, dewarp: st.dewarp,
         spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
         brightness: st.brightness, contrast: st.contrast,
       }),
@@ -353,6 +357,21 @@ $("#importFolder").onclick = async () => {
     const r = await api("/api/import/folder", { method: "POST", body: JSON.stringify({ folder }) });
     toast(`${r.imported}장 가져오는 중…`);
   } catch (err) { toast("가져오기 실패: " + err.message, "bad"); }
+};
+
+// 축(가로/세로)은 자동으로 맞지만 상하는 판별하지 않는다(orient.py 참고).
+// 한 번에 찍은 묶음은 상하가 모두 같으므로 통째로 뒤집는 편이 빠르다.
+$("#rotateAll").onclick = async () => {
+  const btn = $("#rotateAll");
+  if (!state.pages.length) { toast("먼저 사진을 가져오세요.", "bad"); return; }
+  btn.disabled = true;
+  try {
+    const r = await api("/api/sources/rotate_all", {
+      method: "POST", body: JSON.stringify({ delta: 180 }),
+    });
+    toast(`${r.rotated}장 뒤집는 중…`);
+  } catch (err) { toast("회전 실패: " + err.message, "bad"); }
+  finally { btn.disabled = false; }
 };
 
 $("#pickFiles").onclick = () => $("#fileInput").click();

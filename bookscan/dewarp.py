@@ -214,19 +214,3 @@ def dewarp(bgr: np.ndarray, enabled: bool = True) -> DewarpResult:
     out = cv2.remap(bgr, map_x, map_y, cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
     return DewarpResult(out, True, f"적용됨 (줄 {len(lines)}개, 곡률 {curvature:.3f})",
                         n_lines=len(lines), curvature=curvature)
-
-
-def estimate_rotation(bgr: np.ndarray) -> int:
-    """본문이 세로로 서 있으면 90도 회전이 필요하다고 알려준다.
-
-    상하 반전(180도)은 OCR 없이는 못 가리므로 UI의 수동 버튼에 맡긴다.
-    """
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    scale = 800 / max(gray.shape)
-    if scale < 1.0:
-        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    horiz = len(find_text_lines(gray))
-    vert = len(find_text_lines(cv2.rotate(gray, cv2.ROTATE_90_CLOCKWISE)))
-    if vert > horiz + 2:
-        return 90
-    return 0

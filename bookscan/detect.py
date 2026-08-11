@@ -24,6 +24,19 @@ GOOD_ENOUGH = 0.93
 #: 큰 후보가 작은 후보를 감싸고 있을 때, 큰 쪽 점수가 이 비율 이상이면 큰 쪽을 택한다
 CONTAINMENT_TOLERANCE = 0.88
 
+# --- 펼침면 병합 ---------------------------------------------------------
+#: 짝이 되려면 두 후보의 면적 차가 이 배 안이어야 한다 (양쪽 페이지는 크기가 비슷하다)
+PAIR_AREA_RATIO = 2.2
+#: 합집합 껍질이 두 면적의 합보다 이 배 넘게 크면 둘 사이가 벌어진 것 = 짝이 아니다
+PAIR_HULL_SLACK = 1.35
+#: 서로 이만큼 넘게 겹치면 같은 페이지의 변형일 뿐이다
+PAIR_OVERLAP_MAX = 0.15
+#: 병합 후보를 승격시키는 문턱. 일반 승격(CONTAINMENT_TOLERANCE)보다 관대한 이유는
+#: "비슷한 크기의 페이지 둘이 나란히 붙어 있다"는 구조적 근거가 이미 있기 때문이다.
+SPREAD_TOLERANCE = 0.78
+#: 병합 결과가 원래 후보의 몇 배 면적이어야 하는가 (두 페이지니까 2배 근처)
+SPREAD_AREA_MIN, SPREAD_AREA_MAX = 1.55, 2.9
+
 
 @dataclass
 class Detection:
@@ -333,13 +346,115 @@ def _detect_lines(bgr: np.ndarray, gray: np.ndarray) -> list[np.ndarray]:
 
 
 # --------------------------------------------------------------------------
-def _contains(outer: np.ndarray, inner: np.ndarray) -> bool:
-    """inner의 네 꼭짓점이 모두 outer 안에 있는가."""
+def _contains(outer: np.ndarray, inner: np.ndarray, shape: tuple[int, int] | None = None) -> bool:
+    """inner가 outer 안에 들어가는가. 약간의 여유를 둔다.
+
+    여유가 필요한 이유가 둘 있다. 볼록 껍질을 사각형으로 근사하면 모서리가 조금씩
+    깎여 들어가고, 직선 교점법은 프레임 밖 좌표를 내놓기도 한다. 엄격하게 보면
+    실제로는 감싸고 있는데도 몇 픽셀 때문에 승격이 막힌다.
+    """
     poly = outer.astype(np.float32).reshape(-1, 1, 2)
-    return all(cv2.pointPolygonTest(poly, (float(x), float(y)), False) >= 0 for x, y in inner)
+    pts = np.asarray(inner, dtype=np.float32).reshape(-1, 2)
+    tol = 0.0
+    if shape is not None:
+        h, w = shape[:2]
+        # 프레임 밖은 어차피 페이지가 아니므로 안으로 당겨서 비교한다
+        pts = np.stack([np.clip(pts[:, 0], 0, w - 1), np.clip(pts[:, 1], 0, h - 1)], axis=1)
+        tol = 0.012 * float(np.hypot(h, w))
+    return all(cv2.pointPolygonTest(poly, (float(x), float(y)), True) >= -tol for x, y in pts)
 
 
-def _prefer_enclosing(best: Detection, cands: list[Detection]) -> Detection:
+def _overlap_area(a: np.ndarray, b: np.ndarray) -> float:
+    area, _ = cv2.intersectConvexConvex(a.astype(np.float32), b.astype(np.float32))
+    return float(area)
+
+
+def _distinct(cands: list[Detection], limit: int) -> list[Detection]:
+    """서로 충분히 다른 후보만 남긴다.
+
+    직선 교점법은 같은 페이지의 미세한 변형을 수십 개씩 쏟아낸다. 그대로 짝짓기에
+    넘기면 상위 후보가 전부 같은 페이지라서 반대쪽 페이지를 만날 기회가 없다.
+    """
+    kept: list[Detection] = []
+    for c in sorted(cands, key=lambda d: -d.confidence):
+        ca = _polygon_area(c.corners)
+        if ca <= 0:
+            continue
+        dup = False
+        for k in kept:
+            ka = _polygon_area(k.corners)
+            inter = _overlap_area(c.corners, k.corners)
+            union = ca + ka - inter
+            if union > 0 and inter / union > 0.6:
+                dup = True
+                break
+        if not dup:
+            kept.append(c)
+        if len(kept) >= limit:
+            break
+    return kept
+
+
+def _spread_candidates(cands: list[Detection], grad: np.ndarray,
+                       shape: tuple[int, int]) -> list[Detection]:
+    """나란히 붙은 페이지 둘을 하나의 펼침면 사각형으로 합친다.
+
+    펼침면을 찍으면 한쪽 페이지만 딱 잡은 사각형이 양면 전체보다 높은 점수를 받는다.
+    가운데 책등이 바깥 테두리만큼, 때로는 더 또렷하기 때문이다. 실제로 이 사진들에서
+    '한쪽 면' 후보가 0.806점, '전체 책' 후보가 0.630점이었다. 점수만으로는 못 이긴다.
+
+    그래서 점수 대신 구조를 본다. **비슷한 크기의 사각형 둘이 겹치지 않고 딱 붙어
+    있으면** 그건 펼친 책이다. 두 후보의 볼록 껍질을 사각형으로 근사해 후보에 넣는다.
+    """
+    out: list[Detection] = []
+    seen: set[tuple] = set()
+    top = _distinct([c for c in cands if c.confidence >= 0.35], limit=10)
+    for i in range(len(top)):
+        for j in range(i + 1, len(top)):
+            a, b = top[i].corners, top[j].corners
+            aa, ab = _polygon_area(a), _polygon_area(b)
+            if min(aa, ab) <= 0 or max(aa, ab) / min(aa, ab) > PAIR_AREA_RATIO:
+                continue
+            if _overlap_area(a, b) > min(aa, ab) * PAIR_OVERLAP_MAX:
+                continue
+            hull = cv2.convexHull(np.vstack([a, b]).astype(np.float32))
+            q = _quad_from_contour(hull)
+            if q is None or not _is_convex(q):
+                continue
+            if _polygon_area(q) > (aa + ab) * PAIR_HULL_SLACK:
+                continue  # 껍질이 헐렁하다 = 둘이 붙어 있지 않다
+            key = tuple(np.round(q.ravel(), 1))
+            if key in seen:
+                continue
+            seen.add(key)
+            sc = score_quad(q, grad, shape)
+            if sc > 0:
+                out.append(Detection(corners=q, confidence=sc, method="spread"))
+    return out
+
+
+def _prefer_spread(best: Detection, merged: list[Detection],
+                   shape: tuple[int, int]) -> Detection:
+    """병합 후보가 최고점 후보를 감싸고 크기가 두 배쯤이면 그쪽을 택한다."""
+    best_area = _polygon_area(best.corners)
+    if best_area <= 0:
+        return best
+    pick = None
+    for c in merged:
+        ratio = _polygon_area(c.corners) / best_area
+        if not (SPREAD_AREA_MIN <= ratio <= SPREAD_AREA_MAX):
+            continue
+        if c.confidence < best.confidence * SPREAD_TOLERANCE:
+            continue
+        if not _contains(c.corners, best.corners, shape):
+            continue
+        if pick is None or c.confidence > pick.confidence:
+            pick = c
+    return pick or best
+
+
+def _prefer_enclosing(best: Detection, cands: list[Detection],
+                      shape: tuple[int, int]) -> Detection:
     """더 큰 후보가 최고점 후보를 감싸고 있으면 그쪽을 택한다.
 
     펼침면을 찍으면 가운데 책등 그림자가 바깥 테두리보다 진해서, 한쪽 페이지만
@@ -357,7 +472,7 @@ def _prefer_enclosing(best: Detection, cands: list[Detection]) -> Detection:
                 continue
             if c.confidence < best.confidence * CONTAINMENT_TOLERANCE:
                 continue
-            if _contains(c.corners, best.corners):
+            if _contains(c.corners, best.corners, shape):
                 best, improved = c, True
                 break
     return best
@@ -388,7 +503,12 @@ def detect_page(bgr: np.ndarray) -> Detection:
             break  # 충분히 좋으면 나머지 방법은 건너뛴다
 
     if best is not None:
-        best = _prefer_enclosing(best, cands)
+        # 펼침면 병합을 먼저 본다. 한쪽 면만 잡힌 상태에서 감싸기 승격을 돌리면
+        # 그 페이지를 포함하는 엉뚱한 큰 사각형으로 먼저 끌려갈 수 있다.
+        merged = _spread_candidates(cands, grad, (h, w))
+        cands.extend(merged)
+        best = _prefer_spread(best, merged, (h, w))
+        best = _prefer_enclosing(best, cands, (h, w))
 
     if best is None or best.confidence < 0.25:
         # 전부 실패: 프레임 전체를 돌려주고 수동 보정하게 한다

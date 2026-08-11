@@ -33,7 +33,10 @@ class PageSettings:
     #: 원본 이미지 좌표계의 페이지 네 모서리. None이면 자동 검출.
     corners: list[list[float]] | None = None
     mode: Mode = "color"
-    #: 워프 후 적용할 회전 (0/90/180/270, 시계방향)
+    #: 글줄이 가로로 눕도록 축을 자동으로 맞춘다. 상하(180도)는 판별하지 않는다.
+    auto_rotate: bool = True
+    #: 자동 회전에 **더해서** 적용할 회전 (0/90/180/270, 시계방향).
+    #: 자동으로 축을 맞춘 뒤 상하가 뒤집혔으면 여기에 180을 준다.
     rotate: int = 0
     dewarp: bool = True
     spread: SpreadMode = "auto"

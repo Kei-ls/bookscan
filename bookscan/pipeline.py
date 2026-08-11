@@ -17,6 +17,7 @@ from .detect import Detection, detect_page
 from .dewarp import dewarp
 from .enhance import enhance
 from .imgio import fit_long_edge, rotate90
+from .orient import estimate_axis
 from .spread import SpreadResult, detect_gutter, split_spread
 from .warp import clamp_corners, warp_page
 
@@ -61,9 +62,19 @@ def process(original: np.ndarray, settings: PageSettings | None = None) -> Proce
     warped = warp_page(original, det.corners, max_long_edge=MAX_OUTPUT_LONG_EDGE)
 
     # --- 3. 회전 (분할보다 먼저 해야 책등이 세로로 선다) ---
+    # 책을 옆으로 눕혀 찍으면 이후 단계가 전부 헛돈다. 곡면 펴기는 글줄이
+    # 가로로 누워 있다고 보고 곡률을 재고, 펼침면 분할은 책등이 세로로
+    # 서 있다고 보고 찾기 때문이다.
+    auto_rot = 0
+    if st.auto_rotate:
+        o = estimate_axis(warped)
+        auto_rot = o.rotate
+        notes.append(f"자동 회전: {o.reason}")
+    rot = (auto_rot + st.rotate) % 360
+    if rot:
+        warped = rotate90(warped, rot)
     if st.rotate % 360:
-        warped = rotate90(warped, st.rotate)
-        notes.append(f"{st.rotate}도 회전")
+        notes.append(f"수동 회전 {st.rotate % 360}도 (최종 {rot}도)")
 
     # --- 4. 펼침면 분할 ---
     sp: SpreadResult = detect_gutter(warped, st.spread)

@@ -249,6 +249,7 @@ class ReprocessBody(BaseModel):
     corners: list[list[float]] | None = None
     mode: str | None = None
     rotate: int | None = None
+    auto_rotate: bool | None = None
     dewarp: bool | None = None
     spread: str | None = None
     gutter: float | None = None
@@ -281,6 +282,8 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         st.mode = body.mode
     if body.rotate is not None:
         st.rotate = int(body.rotate) % 360
+    if body.auto_rotate is not None:
+        st.auto_rotate = bool(body.auto_rotate)
     if body.dewarp is not None:
         st.dewarp = bool(body.dewarp)
     if body.spread is not None:
@@ -294,6 +297,32 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
 
     await in_pool(project.process_source, sid)
     return snapshot(project)
+
+
+class RotateAllBody(BaseModel):
+    #: 모든 원본의 수동 회전에 더할 각도 (보통 180)
+    delta: int = 180
+
+
+@app.post("/api/sources/rotate_all")
+async def rotate_all(body: RotateAllBody) -> dict:
+    """묶음 전체를 같은 각도만큼 더 돌린다.
+
+    축(가로/세로)은 자동으로 맞지만 상하는 판별하지 않는다 — 시도했다가 반증했고
+    자세한 근거는 orient.py에 적어 뒀다. 대신 한 번에 찍은 사진들은 상하가 모두
+    같으므로, 페이지마다 누르는 대신 묶음을 통째로 뒤집게 한다.
+    """
+    if body.delta % 90:
+        raise HTTPException(400, "90도 단위만 가능합니다.")
+    project = current_project()
+    sids = list(project.sources)
+    if not sids:
+        raise HTTPException(400, "처리할 원본이 없습니다.")
+    for sid in sids:
+        st = project.sources[sid].settings
+        st.rotate = (st.rotate + int(body.delta)) % 360
+    asyncio.get_running_loop().run_in_executor(POOL, _process_all, project, sids)
+    return {"rotated": len(sids), "delta": int(body.delta) % 360}
 
 
 class ReorderBody(BaseModel):
