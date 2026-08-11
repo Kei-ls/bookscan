@@ -1,0 +1,4 @@
+# cmd.exe는 CRLF가 아니면 배치 파일 파싱에 실패한다.
+# run.bat은 CP949로 저장되어 있으므로 git이 내용을 건드리지 않게 -text로 둔다.
+*.bat -text
+*.cmd -text

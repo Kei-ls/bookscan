@@ -1,25 +1,62 @@
 @echo off
-REM Bookscan ì‹¤í–‰. ì²˜ìŒ ì‹¤í–‰í•˜ë©´ ê°€ìƒí™˜ê²½ê³¼ ì˜ì¡´ì„±ì„ ìžë™ìœ¼ë¡œ ì¤€ë¹„í•œë‹¤.
+REM Bookscan ½ÇÇà. Ã³À½ ½ÇÇàÇÏ¸é °¡»óÈ¯°æ°ú ÀÇÁ¸¼ºÀ» ÀÚµ¿À¸·Î ÁØºñÇÑ´Ù.
+REM ÁÖÀÇ: ÀÌ ÆÄÀÏÀº CRLF ÁÙ¹Ù²Þ + CP949(euc-kr) ÀÎÄÚµùÀ¸·Î ÀúÀåÇØ¾ß ÇÑ´Ù.
+REM   - LF¸¸ ÀÖÀ¸¸é cmd°¡ ÆÄ½Ì¿¡ ½ÇÆÐÇÑ´Ù.
+REM   - UTF-8·Î ÀúÀåÇÏ¸é ÇÑ±ÛÀÌ ±úÁö°í, chcp 65001À» ÆÄÀÏ ¾È¿¡¼­ °É¸é
+REM     cmd°¡ ´ÙÀ½ ÁÙÀÇ ¹ÙÀÌÆ® À§Ä¡¸¦ Àß¸ø Àâ¾Æ ¾û¶×ÇÑ ¸í·ÉÀ» ½ÇÇàÇÑ´Ù.
+REM   .gitattributes¿¡¼­ CRLF¿Í binary(º¯È¯ ±ÝÁö)¸¦ °­Á¦ÇÏ°í ÀÖ´Ù.
 setlocal
 cd /d "%~dp0"
 
-set PY=.venv\Scripts\python.exe
+set "PY=.venv\Scripts\python.exe"
 
-if not exist "%PY%" (
-    echo [Bookscan] ê°€ìƒí™˜ê²½ì„ ë§Œë“œëŠ” ì¤‘...
-    set BASEPY=%APPDATA%\uv\python\cpython-3.12.11-windows-x86_64-none\python.exe
-    if not exist "!BASEPY!" set BASEPY=python
-    "%APPDATA%\uv\python\cpython-3.12.11-windows-x86_64-none\python.exe" -m venv .venv 2>nul || python -m venv .venv
-    if not exist "%PY%" (
-        echo [Bookscan] íŒŒì´ì¬ì„ ì°¾ì„ ìˆ˜ ì—†ìŠµë‹ˆë‹¤. Python 3.10 ì´ìƒì„ ì„¤ì¹˜í•œ ë’¤ ë‹¤ì‹œ ì‹¤í–‰í•˜ì„¸ìš”.
-        pause
-        exit /b 1
-    )
-    echo [Bookscan] ì˜ì¡´ì„±ì„ ì„¤ì¹˜í•˜ëŠ” ì¤‘... ^(ì²˜ìŒ í•œ ë²ˆë§Œ, ëª‡ ë¶„ ê±¸ë¦½ë‹ˆë‹¤^)
-    "%PY%" -m pip install --disable-pip-version-check -q -r requirements.txt
-)
+if not exist "%PY%" goto :setup
+REM °¡»óÈ¯°æÀº ÀÖ´Âµ¥ ¼³Ä¡°¡ Áß°£¿¡ ²÷±ä °æ¿ì¸¦ Àâ´Â´Ù.
+"%PY%" -c "import cv2, fastapi, img2pdf, PIL" >nul 2>nul
+if not errorlevel 1 goto :run
+echo [Bookscan] ÀÇÁ¸¼ºÀÌ ºüÁ® ÀÖ½À´Ï´Ù. ´Ù½Ã ¼³Ä¡ÇÕ´Ï´Ù.
+goto :deps
 
-echo [Bookscan] ì„œë²„ë¥¼ ì‹œìž‘í•©ë‹ˆë‹¤. ë¸Œë¼ìš°ì €ê°€ ìžë™ìœ¼ë¡œ ì—´ë¦½ë‹ˆë‹¤.
-echo [Bookscan] ì¢…ë£Œí•˜ë ¤ë©´ ì´ ì°½ì—ì„œ Ctrl+C ë¥¼ ëˆ„ë¥´ì„¸ìš”.
-"%PY%" -m bookscan
+:setup
+echo [Bookscan] °¡»óÈ¯°æÀ» ¸¸µå´Â Áß...
+set "UVPY=%APPDATA%\uv\python\cpython-3.12.11-windows-x86_64-none\python.exe"
+if exist "%UVPY%" "%UVPY%" -m venv .venv
+if exist "%PY%" goto :deps
+
+where py >nul 2>nul
+if not errorlevel 1 py -3 -m venv .venv
+if exist "%PY%" goto :deps
+
+python -m venv .venv 2>nul
+if exist "%PY%" goto :deps
+goto :nopython
+
+:deps
+echo [Bookscan] ÀÇÁ¸¼ºÀ» ¼³Ä¡ÇÏ´Â Áß... ^(Ã³À½ ÇÑ ¹ø¸¸, ¸î ºÐ °É¸³´Ï´Ù^)
+"%PY%" -m pip install --disable-pip-version-check -q -r requirements.txt
+if errorlevel 1 goto :depsfail
+
+:run
+echo [Bookscan] ¼­¹ö¸¦ ½ÃÀÛÇÕ´Ï´Ù. ºê¶ó¿ìÀú°¡ ÀÚµ¿À¸·Î ¿­¸³´Ï´Ù.
+echo [Bookscan] Á¾·áÇÏ·Á¸é ÀÌ Ã¢¿¡¼­ Ctrl+C ¸¦ ´©¸£¼¼¿ä.
+"%PY%" -m bookscan %*
+goto :end
+
+:nopython
+echo.
+echo [Bookscan] ÆÄÀÌ½ãÀ» Ã£À» ¼ö ¾ø½À´Ï´Ù.
+echo            Python 3.10 ÀÌ»óÀ» ¼³Ä¡ÇÑ µÚ ´Ù½Ã ½ÇÇàÇÏ¼¼¿ä.
+echo            https://www.python.org/downloads/
+echo            ¼³Ä¡ÇÒ ¶§ Add python.exe to PATH ¸¦ ¹Ýµå½Ã Ã¼Å©ÇÏ¼¼¿ä.
+pause
+exit /b 1
+
+:depsfail
+echo.
+echo [Bookscan] ÀÇÁ¸¼º ¼³Ä¡¿¡ ½ÇÆÐÇß½À´Ï´Ù.
+echo            ÀÎÅÍ³Ý ¿¬°áÀ» È®ÀÎÇÑ µÚ ´Ù½Ã ½ÇÇàÇÏ¼¼¿ä.
+pause
+exit /b 1
+
+:end
 endlocal
