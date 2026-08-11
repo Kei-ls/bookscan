@@ -179,6 +179,7 @@ function syncControls() {
   document.querySelectorAll("#spreadSeg button").forEach((b) =>
     b.classList.toggle("on", b.dataset.spread === st.spread));
   $("#autoRotateToggle").checked = st.auto_rotate !== false;
+  $("#trimToggle").checked = st.trim !== false;
   $("#dewarpToggle").checked = !!st.dewarp;
   $("#brightRange").value = st.brightness || 0;
   $("#brightVal").textContent = st.brightness || 0;
@@ -285,6 +286,7 @@ document.querySelectorAll("[data-rotate]").forEach((b) => b.onclick = () => {
 $("#autoRotateToggle").onchange = (e) => {
   state.editing.settings.auto_rotate = e.target.checked;
 };
+$("#trimToggle").onchange = (e) => { state.editing.settings.trim = e.target.checked; };
 $("#dewarpToggle").onchange = (e) => { state.editing.settings.dewarp = e.target.checked; };
 $("#brightRange").oninput = (e) => {
   state.editing.settings.brightness = +e.target.value; $("#brightVal").textContent = e.target.value;
@@ -325,7 +327,8 @@ $("#applyEdit").onclick = async () => {
       method: "POST",
       body: JSON.stringify({
         corners: state.editing.corners.length === 4 ? state.editing.corners : null,
-        mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate, dewarp: st.dewarp,
+        mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate,
+        dewarp: st.dewarp, trim: st.trim,
         spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
         brightness: st.brightness, contrast: st.contrast,
       }),

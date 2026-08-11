@@ -39,6 +39,8 @@ class PageSettings:
     #: 자동으로 축을 맞춘 뒤 상하가 뒤집혔으면 여기에 180을 준다.
     rotate: int = 0
     dewarp: bool = True
+    #: 책 실루엣을 따로 따서 그 경계로 재단한다 (책상·바닥 제거 + 테두리 펴기).
+    trim: bool = True
     spread: SpreadMode = "auto"
     #: 워프 결과 폭 기준 0~1로 정규화한 책등 위치. None이면 자동.
     gutter: float | None = None

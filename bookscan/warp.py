@@ -41,6 +41,21 @@ def target_size(quad: np.ndarray, aspect: str = "auto", max_long_edge: int = 350
     return max(1, round(w)), max(1, round(h))
 
 
+def warp_transform(
+    corners: np.ndarray | list,
+    aspect: str = "auto",
+    max_long_edge: int = 3500,
+) -> tuple[np.ndarray, int, int]:
+    """워프에 쓸 호모그래피와 출력 크기. (M, w, h)
+
+    마스크처럼 이미지와 같은 변환을 따로 적용해야 하는 것들이 있어서 분리해 뒀다.
+    """
+    quad = order_corners(np.asarray(corners, dtype=np.float32))
+    w, h = target_size(quad, aspect, max_long_edge)
+    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
+    return cv2.getPerspectiveTransform(quad, dst), w, h
+
+
 def warp_page(
     bgr: np.ndarray,
     corners: np.ndarray | list,
@@ -48,14 +63,19 @@ def warp_page(
     max_long_edge: int = 3500,
 ) -> np.ndarray:
     """corners(입력 이미지 좌표계)로 지정된 사각형 영역을 펴서 돌려준다."""
-    quad = order_corners(np.asarray(corners, dtype=np.float32))
-    w, h = target_size(quad, aspect, max_long_edge)
-    dst = np.array([[0, 0], [w - 1, 0], [w - 1, h - 1], [0, h - 1]], dtype=np.float32)
-    M = cv2.getPerspectiveTransform(quad, dst)
+    M, w, h = warp_transform(corners, aspect, max_long_edge)
     # 축소가 크게 일어나면 INTER_AREA가 낫지만 warpPerspective는 지원하지 않아
     # 확대/유지에 안전한 CUBIC을 쓴다.
     return cv2.warpPerspective(bgr, M, (w, h), flags=cv2.INTER_CUBIC,
                                borderMode=cv2.BORDER_REPLICATE)
+
+
+def warp_mask(mask: np.ndarray, M: np.ndarray, size: tuple[int, int]) -> np.ndarray:
+    """마스크를 이미지와 같은 변환으로 옮긴다. 바깥은 배경(0)으로 채운다."""
+    w, h = size
+    out = cv2.warpPerspective(mask, M, (w, h), flags=cv2.INTER_NEAREST,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    return (out > 127).astype(np.uint8) * 255
 
 
 def clamp_corners(corners: np.ndarray | list, shape: tuple[int, int]) -> np.ndarray:

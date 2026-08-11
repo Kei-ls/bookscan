@@ -94,6 +94,9 @@ def detect_gutter(bgr: np.ndarray, force: str = "auto") -> SpreadResult:
     ink_left = float(ink[:idx].sum())
     ink_right = float(ink[idx:].sum())
     balance = min(ink_left, ink_right) / max(ink_left, ink_right, 1e-6)
+    # 한계: 색지에 흰 글자를 얹은 간지(부 표지)가 한쪽에 오면, 그 페이지 전체가
+    # '잉크 공백'으로 읽혀 책등 위치 자체를 못 찾는다(실측: 탐색 구간 왼쪽 끝인
+    # 0.340에 붙어버림). 그런 사진은 편집 창에서 '두 면 분할'로 직접 지정해야 한다.
     if balance < 0.35:
         return SpreadResult(False, None, 0.8,
                             f"한쪽에만 본문이 있음 (균형 {balance:.2f}) — 단면으로 처리")

@@ -251,6 +251,7 @@ class ReprocessBody(BaseModel):
     rotate: int | None = None
     auto_rotate: bool | None = None
     dewarp: bool | None = None
+    trim: bool | None = None
     spread: str | None = None
     gutter: float | None = None
     brightness: int | None = None
@@ -286,6 +287,8 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         st.auto_rotate = bool(body.auto_rotate)
     if body.dewarp is not None:
         st.dewarp = bool(body.dewarp)
+    if body.trim is not None:
+        st.trim = bool(body.trim)
     if body.spread is not None:
         if body.spread not in ("auto", "single", "split"):
             raise HTTPException(400, f"알 수 없는 분할 설정: {body.spread}")
