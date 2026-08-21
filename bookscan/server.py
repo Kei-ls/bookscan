@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from .camera import Camera, OverlayStream, list_devices
 from .config import INPUT_DIR, OUTPUT_DIR, WEB_DIR, PageSettings
 from .imgio import decode_image
+from .models import MODELS, download_weights, install_packages, status_all
 from .pdf import PAGE_SIZES, build_pdf
 from .store import Project, delete_project, list_projects
 
@@ -92,6 +93,7 @@ def page_json(project: Project, pid: str) -> dict:
 
 def snapshot(project: Project) -> dict:
     return {
+        "defaults": project.defaults.to_dict(),
         "project": project.name,
         "dir": str(project.dir),
         "pages": [page_json(project, pid) for pid in project.order],
@@ -252,6 +254,7 @@ class ReprocessBody(BaseModel):
     auto_rotate: bool | None = None
     dewarp: bool | None = None
     trim: bool | None = None
+    detector: str | None = None
     spread: str | None = None
     gutter: float | None = None
     brightness: int | None = None
@@ -289,6 +292,10 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         st.dewarp = bool(body.dewarp)
     if body.trim is not None:
         st.trim = bool(body.trim)
+    if body.detector is not None:
+        if body.detector not in MODELS:
+            raise HTTPException(400, f"알 수 없는 검출기: {body.detector}")
+        st.detector = body.detector
     if body.spread is not None:
         if body.spread not in ("auto", "single", "split"):
             raise HTTPException(400, f"알 수 없는 분할 설정: {body.spread}")
@@ -414,6 +421,79 @@ async def reveal(body: RevealBody) -> dict:
 
 
 # --------------------------------------------------------------------- 카메라
+# ------------------------------------------------------------------- 검출 모델
+@app.get("/api/models")
+async def get_models() -> dict:
+    """모델 목록과 설치 상태, 그리고 이 프로젝트의 현재 선택."""
+    return {"models": status_all(), "selected": current_project().defaults.detector}
+
+
+class SelectModelBody(BaseModel):
+    id: str
+    #: 이미 가져온 사진들에도 소급 적용하고 다시 처리할 것인가
+    apply_all: bool = False
+
+
+@app.post("/api/models/select")
+async def select_model(body: SelectModelBody) -> dict:
+    """앞으로 가져올 사진의 기본 검출기를 정한다."""
+    if body.id not in MODELS:
+        raise HTTPException(400, f"알 수 없는 검출기: {body.id}")
+    project = current_project()
+    project.defaults.detector = body.id
+    project.save()
+
+    reprocessed = 0
+    if body.apply_all:
+        sids = list(project.sources)
+        for sid in sids:
+            project.sources[sid].settings.detector = body.id
+        reprocessed = len(sids)
+        if sids:
+            asyncio.get_running_loop().run_in_executor(POOL, _process_all, project, sids)
+    return {"selected": body.id, "reprocessed": reprocessed}
+
+
+def _install_model(model_id: str) -> None:
+    """torch 설치 + 가중치 내려받기. 진행 상황은 SSE로 흘린다.
+
+    스레드풀에서 돈다. 여기서 예외가 새어나가면 사용자는 영영 진행률만 보게
+    되므로, 실패도 반드시 이벤트로 알린다.
+    """
+    try:
+        emit("model", id=model_id, phase="packages", done=0, total=0)
+        install_packages(model_id, log=lambda m: emit("model", id=model_id,
+                                                     phase="packages", message=m))
+        emit("model", id=model_id, phase="weights", done=0, total=1)
+        download_weights(model_id, progress=lambda d, t: emit(
+            "model", id=model_id, phase="weights", done=d, total=t))
+        emit("model", id=model_id, phase="done")
+    except Exception as e:  # noqa: BLE001 - 사용자에게 그대로 보여준다
+        emit("model", id=model_id, phase="error", message=str(e))
+
+
+@app.post("/api/models/{model_id}/install")
+async def install_model(model_id: str) -> dict:
+    """torch와 가중치를 이 venv에 설치한다. 오래 걸리므로 백그라운드로 돌린다."""
+    if model_id not in MODELS:
+        raise HTTPException(404, "그런 모델이 없습니다.")
+    info = MODELS[model_id]
+    if not info.neural:
+        raise HTTPException(400, "내장 알고리즘은 설치할 것이 없습니다.")
+    if _state.get("installing"):
+        raise HTTPException(409, "이미 설치가 진행 중입니다.")
+    _state["installing"] = model_id
+
+    def run() -> None:
+        try:
+            _install_model(model_id)
+        finally:
+            _state["installing"] = None
+
+    asyncio.get_running_loop().run_in_executor(POOL, run)
+    return {"started": model_id}
+
+
 @app.get("/api/cameras")
 async def cameras() -> dict:
     devices = await in_pool(list_devices)

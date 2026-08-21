@@ -41,6 +41,9 @@ class PageSettings:
     dewarp: bool = True
     #: 책 실루엣을 따로 따서 그 경계로 재단한다 (책상·바닥 제거 + 테두리 펴기).
     trim: bool = True
+    #: 페이지 검출에 쓸 모델 id (bookscan/models/catalog.py 참고).
+    #: "classic"은 설치할 것이 없는 내장 알고리즘, 나머지는 선택 설치형 신경망이다.
+    detector: str = "classic"
     spread: SpreadMode = "auto"
     #: 워프 결과 폭 기준 0~1로 정규화한 책등 위치. None이면 자동.
     gutter: float | None = None

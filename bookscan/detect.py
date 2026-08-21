@@ -7,6 +7,10 @@
   1) contour  - 배경과 밝기 대비가 있을 때 (가장 흔한 경우)
   2) lab      - 종이는 "밝고 채도 낮다"는 성질. 어두운/알록달록한 배경에 강함
   3) lines    - 흰 책상 위 흰 종이처럼 대비는 없지만 모서리 직선은 살아있을 때
+
+선택 설치형 신경망을 켜면 그 분할 마스크가 네 번째 후보 공급원("nn")으로
+합류한다. 특별 대우는 하지 않는다 — 같은 채점 함수로 재고 이기면 쓴다.
+신경망이 엉뚱한 걸 잡아도 채점에서 걸러지도록 하기 위함이다.
 """
 
 from __future__ import annotations
@@ -23,6 +27,10 @@ MAX_AREA_RATIO = 0.999
 GOOD_ENOUGH = 0.93
 #: 큰 후보가 작은 후보를 감싸고 있을 때, 큰 쪽 점수가 이 비율 이상이면 큰 쪽을 택한다
 CONTAINMENT_TOLERANCE = 0.88
+#: 신경망 후보가 이 점수를 넘으면 고전 방법을 아예 돌리지 않는다 ("신경망" 모드 전용).
+#: 넘지 못하면 조용히 고전 방법으로 되돌아간다 — 모델이 실패한 사진에서
+#: 검출 자체를 포기하는 것보다 훨씬 낫다.
+NN_TRUST = 0.55
 
 # --- 펼침면 병합 ---------------------------------------------------------
 #: 짝이 되려면 두 후보의 면적 차가 이 배 안이어야 한다 (양쪽 페이지는 크기가 비슷하다)
@@ -478,19 +486,23 @@ def _prefer_enclosing(best: Detection, cands: list[Detection],
     return best
 
 
-def detect_page(bgr: np.ndarray) -> Detection:
-    """페이지 사각형을 찾는다. 입력 이미지 좌표계로 결과를 돌려준다."""
+def detect_page(bgr: np.ndarray, prior_mask: np.ndarray | None = None,
+                prior_only: bool = False) -> Detection:
+    """페이지 사각형을 찾는다. 입력 이미지 좌표계로 결과를 돌려준다.
+
+    prior_mask를 주면(신경망 분할 결과 등) 거기서 뽑은 사각형도 후보에 넣는다.
+    prior_only는 "신경망을 믿고 고전 방법은 건너뛴다"는 뜻이지만, 신경망 후보가
+    NN_TRUST에 못 미치면 무시하고 고전 방법을 돌린다.
+    """
     h, w = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     grad = _gradient_map(gray)
 
     best: Detection | None = None
     cands: list[Detection] = []
-    for name, fn in (("contour", _detect_contour), ("lab", _detect_lab), ("lines", _detect_lines)):
-        try:
-            quads = fn(bgr, gray)
-        except Exception:
-            quads = []
+
+    def add(quads, name: str) -> None:
+        nonlocal best
         for q in quads:
             sc = score_quad(q, grad, (h, w))
             if sc <= 0:
@@ -499,8 +511,23 @@ def detect_page(bgr: np.ndarray) -> Detection:
             cands.append(det)
             if best is None or sc > best.confidence:
                 best = det
-        if best is not None and best.confidence >= GOOD_ENOUGH:
-            break  # 충분히 좋으면 나머지 방법은 건너뛴다
+
+    if prior_mask is not None:
+        try:
+            add(_candidates_from_mask(prior_mask, top=4), "nn")
+        except Exception:
+            pass
+
+    if not (prior_only and best is not None and best.confidence >= NN_TRUST):
+        for name, fn in (("contour", _detect_contour), ("lab", _detect_lab),
+                         ("lines", _detect_lines)):
+            try:
+                quads = fn(bgr, gray)
+            except Exception:
+                quads = []
+            add(quads, name)
+            if best is not None and best.confidence >= GOOD_ENOUGH:
+                break  # 충분히 좋으면 나머지 방법은 건너뛴다
 
     if best is not None:
         # 펼침면 병합을 먼저 본다. 한쪽 면만 잡힌 상태에서 감싸기 승격을 돌리면

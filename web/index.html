@@ -16,6 +16,7 @@
     <button id="newProject" class="ghost" title="새 프로젝트">＋</button>
   </div>
   <div class="spacer"></div>
+  <button id="modelBtn" class="ghost">검출 모델</button>
   <button id="revealBtn" class="ghost">출력 폴더 열기</button>
   <button id="cameraBtn" class="ghost">카메라</button>
   <button id="pdfBtn" class="primary">PDF 만들기</button>
@@ -105,6 +106,12 @@
         </div>
 
         <div class="field">
+          <label>검출 모델</label>
+          <select id="detectorSelect"></select>
+          <p id="detectorHint" class="hint small"></p>
+        </div>
+
+        <div class="field">
           <label class="check">
             <input id="trimToggle" type="checkbox"> 책 경계로 재단 (배경 제거)
           </label>
@@ -156,6 +163,30 @@
       <div class="row center">
         <button id="captureBtn" class="primary big">촬영 (스페이스바)</button>
         <span id="captureCount" class="mono"></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 검출 모델 패널 -->
+<div id="modelPanel" class="overlay" hidden>
+  <div class="panel small-panel">
+    <header>
+      <h2>페이지 검출 모델</h2>
+      <button class="close" data-close>✕</button>
+    </header>
+    <div class="pdf-body">
+      <p class="hint">앞으로 가져올 사진에 쓸 모델입니다. 사진별로는 편집 창에서 따로 바꿀 수 있습니다.</p>
+      <div id="modelList" class="modellist"></div>
+      <div id="modelProgress" class="progress" hidden>
+        <div class="bar"><div class="fill"></div></div>
+        <span class="label"></span>
+      </div>
+      <label class="check">
+        <input id="modelApplyAll" type="checkbox"> 이미 가져온 사진도 다시 처리
+      </label>
+      <div class="editor-actions">
+        <button id="applyModel" class="primary">선택 적용</button>
       </div>
     </div>
   </div>

@@ -92,6 +92,8 @@ class Project:
         self.sources: dict[str, Source] = {}
         self.pages: dict[str, Page] = {}
         self.order: list[str] = []
+        #: 새로 가져오는 사진에 적용할 기본 설정. 검출 모델 선택이 여기 산다.
+        self.defaults = PageSettings()
         self._counter = 0
         self._lock = threading.RLock()
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -114,6 +116,7 @@ class Project:
         self.sources = {k: Source.from_dict(v) for k, v in data.get("sources", {}).items()}
         self.pages = {k: Page.from_dict(v) for k, v in data.get("pages", {}).items()}
         self.order = [p for p in data.get("order", []) if p in self.pages]
+        self.defaults = PageSettings.from_dict(data.get("defaults"))
         self._counter = int(data.get("counter", 0))
         # 매니페스트에 없는데 남아있는 페이지도 순서 끝에 붙여준다
         for pid in self.pages:
@@ -126,6 +129,7 @@ class Project:
                 "version": 1,
                 "name": self.name,
                 "counter": self._counter,
+                "defaults": self.defaults.to_dict(),
                 "sources": {k: v.to_dict() for k, v in self.sources.items()},
                 "pages": {k: v.to_dict() for k, v in self.pages.items()},
                 "order": self.order,
@@ -145,7 +149,10 @@ class Project:
             sid = self._next_id("s")
             rel = f"originals/{sid}.jpg"
             imwrite(self.dir / rel, image, quality=95)
-            src = Source(id=sid, filename=filename, original=rel)
+            # to_dict/from_dict를 거쳐 깊은 복사를 만든다. dataclasses.replace는
+            # 리스트를 공유해서, 한 장의 코너를 고치면 다른 장까지 따라 바뀐다.
+            src = Source(id=sid, filename=filename, original=rel,
+                         settings=PageSettings.from_dict(self.defaults.to_dict()))
             self.sources[sid] = src
             return src
 

@@ -10,6 +10,8 @@ const state = {
   editing: null,   // { sid, corners, imgW, imgH, settings }
   dragId: null,
   cameraOn: false,
+  models: [],
+  selectedModel: "classic",
 };
 
 // ------------------------------------------------------------------ helpers
@@ -42,6 +44,7 @@ function applySnapshot(data) {
   if (data.sources) state.sources = data.sources;
   if (data.project) state.project = data.project;
   if (data.dir) state.dir = data.dir;
+  if (data.defaults && data.defaults.detector) state.selectedModel = data.defaults.detector;
   renderGrid();
 }
 
@@ -180,6 +183,7 @@ function syncControls() {
     b.classList.toggle("on", b.dataset.spread === st.spread));
   $("#autoRotateToggle").checked = st.auto_rotate !== false;
   $("#trimToggle").checked = st.trim !== false;
+  syncDetectorSelect(st.detector || "classic");
   $("#dewarpToggle").checked = !!st.dewarp;
   $("#brightRange").value = st.brightness || 0;
   $("#brightVal").textContent = st.brightness || 0;
@@ -328,7 +332,7 @@ $("#applyEdit").onclick = async () => {
       body: JSON.stringify({
         corners: state.editing.corners.length === 4 ? state.editing.corners : null,
         mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate,
-        dewarp: st.dewarp, trim: st.trim,
+        dewarp: st.dewarp, trim: st.trim, detector: st.detector,
         spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
         brightness: st.brightness, contrast: st.contrast,
       }),
@@ -425,12 +429,180 @@ function connectEvents() {
     } else if (msg.type === "done") {
       setTimeout(() => { $("#progress").hidden = true; }, 1200);
       applySnapshot(await api("/api/state"));
+    } else if (msg.type === "model") {
+      onModelEvent(msg);
     } else if (msg.type === "error") {
       toast(`${msg.filename}: ${msg.message}`, "bad");
     }
   };
   es.onerror = () => { es.close(); setTimeout(connectEvents, 3000); };
 }
+
+// ------------------------------------------------------------------ 검출 모델
+function modelById(id) {
+  return state.models.find((m) => m.id === id);
+}
+
+/** 편집 창의 드롭다운을 현재 모델 목록으로 다시 그린다. */
+function syncDetectorSelect(current) {
+  const sel = $("#detectorSelect");
+  if (!sel) return;
+  sel.innerHTML = "";
+  const list = state.models.length ? state.models
+    : [{ id: current, name: current, ready: true }];
+  for (const m of list) {
+    const o = document.createElement("option");
+    o.value = m.id;
+    o.textContent = m.ready ? m.name : `${m.name} — 설치 필요`;
+    sel.appendChild(o);
+  }
+  sel.value = current;
+  const m = modelById(current);
+  $("#detectorHint").textContent = m
+    ? (m.ready ? m.summary : `${m.summary} (위 '검출 모델'에서 설치하세요)`)
+    : "";
+}
+
+$("#detectorSelect").onchange = (e) => {
+  if (!state.editing) return;
+  state.editing.settings.detector = e.target.value;
+  syncControls();
+};
+
+async function loadModels() {
+  const r = await api("/api/models");
+  state.models = r.models;
+  state.selectedModel = r.selected;
+  return r;
+}
+
+function renderModelList() {
+  const box = $("#modelList");
+  box.innerHTML = "";
+  for (const m of state.models) {
+    const row = document.createElement("label");
+    row.className = "modelrow" + (m.ready ? "" : " missing");
+
+    const radio = document.createElement("input");
+    radio.type = "radio";
+    radio.name = "model";
+    radio.value = m.id;
+    radio.checked = m.id === state.selectedModel;
+    radio.onchange = () => { state.selectedModel = m.id; };
+
+    const body = document.createElement("div");
+    const title = document.createElement("div");
+    title.className = "modelname";
+    title.textContent = m.name;
+    if (!m.ready) {
+      const badge = document.createElement("span");
+      badge.className = "badge warn";
+      badge.textContent = m.missing.join(" + ") + " 없음";
+      title.appendChild(badge);
+    }
+    const desc = document.createElement("p");
+    desc.className = "hint small";
+    desc.textContent = m.summary;
+    body.append(title, desc);
+
+    if (m.source) {
+      const src = document.createElement("p");
+      src.className = "hint small";
+      src.textContent = `출처 ${m.source} — ${m.license}`;
+      body.appendChild(src);
+    }
+    if (!m.ready) {
+      const btn = document.createElement("button");
+      btn.className = "ghost";
+      const mb = Math.round(m.weights_bytes / 1e6);
+      btn.textContent = `설치 (torch + 가중치 ${mb}MB 내려받기)`;
+      btn.onclick = (e) => { e.preventDefault(); installModel(m.id, btn); };
+      body.appendChild(btn);
+    }
+    row.append(radio, body);
+    box.appendChild(row);
+  }
+}
+
+let installingBtn = null;
+async function installModel(id, btn) {
+  btn.disabled = true;
+  btn.textContent = "설치 중…";
+  installingBtn = btn;
+  const box = $("#modelProgress");
+  box.hidden = false;
+  box.querySelector(".fill").style.width = "0%";
+  box.querySelector(".label").textContent = "시작하는 중…";
+  try {
+    await api(`/api/models/${id}/install`, { method: "POST" });
+  } catch (err) {
+    toast("설치를 시작하지 못했습니다: " + err.message, "bad");
+    box.hidden = true;
+    btn.disabled = false;
+    btn.textContent = "설치";
+    installingBtn = null;
+  }
+}
+
+async function onModelEvent(msg) {
+  const box = $("#modelProgress");
+  const fill = box.querySelector(".fill");
+  const label = box.querySelector(".label");
+  box.hidden = false;
+  if (msg.phase === "packages") {
+    fill.style.width = "8%";
+    label.textContent = msg.message || "torch 설치 중… (수백 MB, 몇 분 걸립니다)";
+  } else if (msg.phase === "weights") {
+    // 다운로드 구간을 10~100%에 매핑한다. 앞의 10%는 패키지 설치 몫.
+    const pct = msg.total ? 10 + (msg.done / msg.total) * 90 : 10;
+    fill.style.width = pct + "%";
+    label.textContent = `가중치 내려받는 중 ${(msg.done / 1e6).toFixed(0)}`
+      + `/${(msg.total / 1e6).toFixed(0)} MB`;
+  } else if (msg.phase === "done") {
+    fill.style.width = "100%";
+    label.textContent = "설치 완료";
+    await loadModels();
+    renderModelList();
+    setTimeout(() => { box.hidden = true; }, 1500);
+    toast("모델 설치 완료", "good");
+    installingBtn = null;
+  } else if (msg.phase === "error") {
+    box.hidden = true;
+    toast("설치 실패: " + msg.message, "bad");
+    if (installingBtn) { installingBtn.disabled = false; installingBtn.textContent = "설치 다시 시도"; }
+    installingBtn = null;
+  }
+}
+
+$("#modelBtn").onclick = async () => {
+  $("#modelPanel").hidden = false;
+  try {
+    await loadModels();
+    renderModelList();
+  } catch (err) {
+    toast("모델 목록을 불러오지 못했습니다: " + err.message, "bad");
+  }
+};
+
+$("#applyModel").onclick = async () => {
+  const btn = $("#applyModel");
+  const chosen = modelById(state.selectedModel);
+  if (chosen && !chosen.ready) {
+    toast("먼저 설치해야 이 모델을 쓸 수 있습니다.", "bad");
+    return;
+  }
+  btn.disabled = true;
+  try {
+    const r = await api("/api/models/select", {
+      method: "POST",
+      body: JSON.stringify({ id: state.selectedModel, apply_all: $("#modelApplyAll").checked }),
+    });
+    $("#modelPanel").hidden = true;
+    toast(r.reprocessed ? `${r.reprocessed}장을 다시 처리합니다` : "모델을 바꿨습니다", "good");
+  } catch (err) {
+    toast("적용 실패: " + err.message, "bad");
+  } finally { btn.disabled = false; }
+};
 
 // ------------------------------------------------------------------ 카메라
 $("#cameraBtn").onclick = async () => {
@@ -587,6 +759,7 @@ window.addEventListener("resize", () => {
     fillProjects(data.projects, data.project);
     $("#folderInput").value = data.default_input || "";
     connectEvents();
+    loadModels().catch(() => { /* 모델 목록은 없어도 편집은 된다 */ });
   } catch (err) {
     toast("서버에 연결할 수 없습니다: " + err.message, "bad");
   }

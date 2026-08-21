@@ -7,3 +7,7 @@ pillow-heif
 img2pdf
 python-multipart
 pygrabber
+
+# torch는 여기 넣지 않는다. 신경망 검출기를 쓰는 사람만 필요한 200MB짜리 선택
+# 의존성이라, UI의 '검출 모델 > 설치'가 CPU 전용 인덱스에서 따로 받아 깐다.
+# (윈도우 기본 PyPI 휠은 CUDA가 딸려와 2GB가 넘는다.)

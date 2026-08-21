@@ -16,6 +16,12 @@
 
 마스크가 이상하면(면적이 크게 어긋나거나 조각나면) None을 돌려주고 호출부는
 기존 동작을 그대로 쓴다.
+
+신경망 검출기를 켜면 그 분할 마스크를 prior로 받아 GrabCut 대신 쓴다. 이미
+실루엣이니 색 모델을 다시 학습시킬 이유가 없고, 훨씬 빠르다. 다만 **같은
+검사를 똑같이 통과해야 한다** — 신경망도 틀린다. 실제로 색지 간지가 있는
+사진에서는 그 페이지를 배경으로 보고 책의 절반만 내놓는다. 그런 마스크는
+면적 검사에 걸려 자동으로 GrabCut으로 되돌아간다.
 """
 
 from __future__ import annotations
@@ -26,6 +32,8 @@ import numpy as np
 #: GrabCut을 돌릴 해상도. 실루엣만 있으면 되므로 크게 볼 필요가 없다.
 WORK_LONG_EDGE = 700
 ITERATIONS = 5
+#: 결과를 재현 가능하게 만드는 난수 씨 (아래 grabCut 호출부 주석 참고)
+GRABCUT_SEED = 20240211
 
 #: 씨앗 사각형을 얼마나 넓혀 "배경일 가능성" 띠로 둘 것인가.
 #: 넉넉히 열어주면(예: 1.10) GrabCut이 어두운 책상을 책의 어두운 부분과 같은 색으로
@@ -47,39 +55,13 @@ def _scaled(quad: np.ndarray, factor: float) -> np.ndarray:
     return ((quad - c) * factor + c).astype(np.int32)
 
 
-def book_mask(bgr: np.ndarray, quad: np.ndarray) -> np.ndarray | None:
-    """책이 차지하는 영역을 255로 채운 마스크. 실패하면 None.
+def _clean(mask: np.ndarray, seed_area: float) -> np.ndarray | None:
+    """모폴로지 정리 → 최대 덩어리만 남기기 → 사각형 대비 면적 검사 → 구멍 메우기.
 
-    입력 이미지와 같은 크기로 돌려준다.
+    GrabCut 결과든 신경망 결과든 똑같이 통과시킨다. 출처가 어디든 믿을 수 있는
+    마스크의 조건은 같기 때문이다.
     """
-    h0, w0 = bgr.shape[:2]
-    scale = WORK_LONG_EDGE / max(h0, w0)
-    if scale < 1.0:
-        small = cv2.resize(bgr, (max(1, round(w0 * scale)), max(1, round(h0 * scale))),
-                           interpolation=cv2.INTER_AREA)
-        q = np.asarray(quad, np.float32) * scale
-    else:
-        small, q, scale = bgr, np.asarray(quad, np.float32), 1.0
-
-    h, w = small.shape[:2]
-    seed_area = float(cv2.contourArea(q.astype(np.float32)))
-    if seed_area < h * w * 0.05:
-        return None
-
-    gm = np.full((h, w), cv2.GC_BGD, np.uint8)
-    cv2.fillPoly(gm, [_scaled(q, SEED_OUTER)], cv2.GC_PR_BGD)
-    cv2.fillPoly(gm, [_scaled(q, 1.00)], cv2.GC_PR_FGD)
-    cv2.fillPoly(gm, [_scaled(q, SEED_INNER)], cv2.GC_FGD)
-    if not (gm == cv2.GC_FGD).any() or not (gm == cv2.GC_BGD).any():
-        return None  # 씨앗이 한쪽으로 쏠리면 GrabCut이 의미가 없다
-
-    try:
-        cv2.grabCut(small, gm, None, np.zeros((1, 65), np.float64),
-                    np.zeros((1, 65), np.float64), ITERATIONS, cv2.GC_INIT_WITH_MASK)
-    except Exception:
-        return None
-
-    mask = np.where((gm == cv2.GC_FGD) | (gm == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    h, w = mask.shape[:2]
     k = max(3, int(min(h, w) * 0.012)) | 1
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
@@ -96,15 +78,71 @@ def book_mask(bgr: np.ndarray, quad: np.ndarray) -> np.ndarray | None:
         return None  # 여러 조각으로 갈라졌다 = 분할 실패
     mask = np.where(labels == big, 255, 0).astype(np.uint8)
 
-    ratio = big_area / seed_area
-    if not (MIN_AREA_RATIO <= ratio <= MAX_AREA_RATIO):
+    if not (MIN_AREA_RATIO <= big_area / seed_area <= MAX_AREA_RATIO):
         return None  # 사각형과 너무 다르면 뭔가 잘못 잡은 것
 
     # 구멍 메우기 — 책 안쪽의 어두운 도판이 배경으로 빠지는 걸 막는다
     filled = mask.copy()
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     cv2.drawContours(filled, cnts, -1, 255, cv2.FILLED)
+    return filled
 
+
+def book_mask(bgr: np.ndarray, quad: np.ndarray,
+              prior: np.ndarray | None = None) -> np.ndarray | None:
+    """책이 차지하는 영역을 255로 채운 마스크. 실패하면 None.
+
+    입력 이미지와 같은 크기로 돌려준다. prior(신경망 분할 마스크, bgr과 같은
+    크기)가 주어지고 검사를 통과하면 GrabCut을 생략한다.
+    """
+    h0, w0 = bgr.shape[:2]
+    scale = WORK_LONG_EDGE / max(h0, w0)
     if scale < 1.0:
-        filled = cv2.resize(filled, (w0, h0), interpolation=cv2.INTER_NEAREST)
-    return (filled > 127).astype(np.uint8) * 255
+        size = (max(1, round(w0 * scale)), max(1, round(h0 * scale)))
+        small = cv2.resize(bgr, size, interpolation=cv2.INTER_AREA)
+        q = np.asarray(quad, np.float32) * scale
+    else:
+        small, q, scale = bgr, np.asarray(quad, np.float32), 1.0
+        size = (w0, h0)
+
+    h, w = small.shape[:2]
+    seed_area = float(cv2.contourArea(q.astype(np.float32)))
+    if seed_area < h * w * 0.05:
+        return None
+
+    if prior is not None:
+        pr = cv2.resize(prior, size, interpolation=cv2.INTER_NEAREST)
+        out = _clean((pr > 127).astype(np.uint8) * 255, seed_area)
+        if out is not None:
+            return _restore(out, scale, (w0, h0))
+        # 통과 못 하면 아래 GrabCut으로 계속 간다
+
+    gm = np.full((h, w), cv2.GC_BGD, np.uint8)
+    cv2.fillPoly(gm, [_scaled(q, SEED_OUTER)], cv2.GC_PR_BGD)
+    cv2.fillPoly(gm, [_scaled(q, 1.00)], cv2.GC_PR_FGD)
+    cv2.fillPoly(gm, [_scaled(q, SEED_INNER)], cv2.GC_FGD)
+    if not (gm == cv2.GC_FGD).any() or not (gm == cv2.GC_BGD).any():
+        return None  # 씨앗이 한쪽으로 쏠리면 GrabCut이 의미가 없다
+
+    # GrabCut은 색 모델(GMM)을 k-means로 초기화하는데, 그 k-means가 OpenCV의
+    # 전역 난수를 쓴다. 씨를 고정하지 않으면 **같은 사진을 다시 처리할 때마다
+    # 결과가 달라진다** — 실제로 어떤 사진이 실행마다 재단됐다 안 됐다 했다.
+    cv2.setRNGSeed(GRABCUT_SEED)
+    try:
+        cv2.grabCut(small, gm, None, np.zeros((1, 65), np.float64),
+                    np.zeros((1, 65), np.float64), ITERATIONS, cv2.GC_INIT_WITH_MASK)
+    except Exception:
+        return None
+
+    mask = np.where((gm == cv2.GC_FGD) | (gm == cv2.GC_PR_FGD), 255, 0).astype(np.uint8)
+    out = _clean(mask, seed_area)
+    if out is None:
+        return None
+    return _restore(out, scale, (w0, h0))
+
+
+def _restore(mask: np.ndarray, scale: float, size: tuple[int, int]) -> np.ndarray:
+    """작업 해상도 마스크를 원본 크기로 되돌린다."""
+    if scale < 1.0:
+        mask = cv2.resize(mask, size, interpolation=cv2.INTER_NEAREST)
+    return (mask > 127).astype(np.uint8) * 255
