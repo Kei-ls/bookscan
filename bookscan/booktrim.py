@@ -200,12 +200,21 @@ def _erase_background(bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
 
 
 def trim_to_book(bgr: np.ndarray, mask: np.ndarray | None,
-                 enabled: bool = True) -> TrimResult:
-    """책 영역만 남긴다. 경계가 믿을 만하면 곡선을 펴서, 아니면 지우고 잘라서."""
+                 enabled: bool = True, geometry: bool = True) -> TrimResult:
+    """책 영역만 남긴다. 경계가 믿을 만하면 곡선을 펴서, 아니면 지우고 잘라서.
+
+    `geometry=False`면 아래 쿤스 패치 단계를 통째로 건너뛰고 배경만 지운다.
+    앞단의 곡선 워프(`pagecurve` + `warp.curved_maps`)가 이미 테두리를 폈을 때
+    쓴다. 편 걸 또 펴면 두 번 편 셈이 되고, 3500픽셀짜리 리샘플링만 한 번 더
+    낭비된다.
+    """
     if not enabled:
         return TrimResult(bgr, False, "사용자가 끔")
     if mask is None or not (mask > 0).any():
         return TrimResult(bgr, False, "책 영역을 못 따냄 — 그대로 둠")
+    if not geometry:
+        return TrimResult(_erase_background(bgr, mask), True,
+                          f"배경 지움 (곡선 보정이 이미 폄, {(1 - float((mask > 0).mean())) * 100:.0f}% 제거)")
 
     h, w = bgr.shape[:2]
     covered = float((mask > 0).mean())

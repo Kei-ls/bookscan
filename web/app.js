@@ -155,6 +155,7 @@ function openEditor(page) {
   state.editing = {
     sid: page.source, pageId: page.id, settings: st,
     corners: (st.corners || src.corners || []).map((c) => c.slice()),
+    outline: (src.outline || []).map((c) => c.slice()),
   };
 
   $("#editTitle").textContent = `편집 — ${src.filename}`;
@@ -184,6 +185,7 @@ function syncControls() {
   $("#autoRotateToggle").checked = st.auto_rotate !== false;
   $("#trimToggle").checked = st.trim !== false;
   syncDetectorSelect(st.detector || "classic");
+  $("#curveToggle").checked = st.curve !== false;
   $("#dewarpToggle").checked = !!st.dewarp;
   $("#brightRange").value = st.brightness || 0;
   $("#brightVal").textContent = st.brightness || 0;
@@ -225,6 +227,21 @@ function drawCanvas() {
   ctx.strokeStyle = "#5b9cff";
   ctx.lineWidth = 2;
   ctx.stroke();
+
+  // 굽은 테두리를 실제로 폈다면 그 곡선을 겹쳐 보여준다. 파란 사각형과 노란
+  // 곡선이 벌어진 만큼이 사각형으로는 담지 못하던 부분이다.
+  const outline = state.editing.outline || [];
+  if (outline.length > 3) {
+    ctx.beginPath();
+    outline.forEach(([x, y], i) => {
+      const cx = x * state.editing.scale, cy = y * state.editing.scale;
+      if (i === 0) ctx.moveTo(cx, cy); else ctx.lineTo(cx, cy);
+    });
+    ctx.closePath();
+    ctx.strokeStyle = "#ffd23f";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+  }
 
   pts.forEach(([x, y], i) => {
     ctx.beginPath();
@@ -292,6 +309,7 @@ $("#autoRotateToggle").onchange = (e) => {
 };
 $("#trimToggle").onchange = (e) => { state.editing.settings.trim = e.target.checked; };
 $("#dewarpToggle").onchange = (e) => { state.editing.settings.dewarp = e.target.checked; };
+$("#curveToggle").onchange = (e) => { state.editing.settings.curve = e.target.checked; };
 $("#brightRange").oninput = (e) => {
   state.editing.settings.brightness = +e.target.value; $("#brightVal").textContent = e.target.value;
 };
@@ -332,7 +350,7 @@ $("#applyEdit").onclick = async () => {
       body: JSON.stringify({
         corners: state.editing.corners.length === 4 ? state.editing.corners : null,
         mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate,
-        dewarp: st.dewarp, trim: st.trim, detector: st.detector,
+        dewarp: st.dewarp, curve: st.curve, trim: st.trim, detector: st.detector,
         spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
         brightness: st.brightness, contrast: st.contrast,
       }),
@@ -348,6 +366,8 @@ function refreshEditorPreview() {
   const sid = state.editing && state.editing.sid;
   if (!sid) return;
   const page = state.pages.find((p) => p.source === sid);
+  state.editing.outline = ((state.sources[sid] || {}).outline || []).map((c) => c.slice());
+  drawCanvas();
   if (page) {
     $("#editPreview").src = `/api/pages/${page.id}/full?v=${page.version}&t=${Date.now()}`;
     const src = state.sources[sid];

@@ -39,6 +39,9 @@ class Source:
     original: str  # 프로젝트 폴더 기준 상대경로
     settings: PageSettings = field(default_factory=PageSettings)
     corners: list[list[float]] | None = None  # 마지막 검출 결과
+    #: 곡선 보정을 실제로 적용했을 때의 굽은 테두리 폐곡선 (원본 좌표계).
+    #: 편집 화면에 겹쳐 그려서 무엇을 폈는지 눈으로 확인시킨다.
+    outline: list[list[float]] | None = None
     confidence: float = 0.0
     method: str = ""
     is_spread: bool = False
@@ -202,6 +205,7 @@ class Project:
                 self.order.insert(insert_at + i, page.id)
 
             src.corners = result.corners
+            src.outline = result.outline
             src.confidence = result.confidence
             src.method = result.method
             src.is_spread = result.is_spread

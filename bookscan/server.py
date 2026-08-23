@@ -68,6 +68,7 @@ def source_json(project: Project, sid: str) -> dict:
         "is_spread": s.is_spread,
         "gutter": s.gutter,
         "corners": s.corners,
+        "outline": s.outline,
         "notes": s.notes,
         "settings": s.settings.to_dict(),
     }
@@ -253,6 +254,7 @@ class ReprocessBody(BaseModel):
     rotate: int | None = None
     auto_rotate: bool | None = None
     dewarp: bool | None = None
+    curve: bool | None = None
     trim: bool | None = None
     detector: str | None = None
     spread: str | None = None
@@ -290,6 +292,8 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         st.auto_rotate = bool(body.auto_rotate)
     if body.dewarp is not None:
         st.dewarp = bool(body.dewarp)
+    if body.curve is not None:
+        st.curve = bool(body.curve)
     if body.trim is not None:
         st.trim = bool(body.trim)
     if body.detector is not None:

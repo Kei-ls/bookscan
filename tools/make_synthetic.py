@@ -77,6 +77,52 @@ def curl(page: np.ndarray, strength: float = 0.055, side: str = "left") -> np.nd
                      borderMode=cv2.BORDER_CONSTANT, borderValue=(252, 252, 252))
 
 
+def bend(page: np.ndarray, strength: float = 0.30,
+         side: str = "left") -> tuple[np.ndarray, np.ndarray]:
+    """책을 원통형으로 세운 것처럼 만든다. **테두리까지 같이 휜다.**
+
+    위의 `curl`은 페이지 **안쪽 글자만** 밀기 때문에 실루엣이 반듯한 사각형으로
+    남는다. 실제 사진은 그렇지 않다. 책등 쪽 종이는 카메라에서 멀어지면서 그
+    부분이 통째로 작게 찍히고, 그래서 위/아래 테두리가 안쪽으로 오므라든다.
+    곡선 윤곽선 검출을 시험하려면 그 오므라듦이 반드시 있어야 한다.
+
+    모델은 분리 가능(separable)하게 잡았다. 열 u마다 확대율 m(u) 하나가 있고,
+    가로 위치와 세로 크기가 둘 다 그 m(u)로 정해진다. 원근에서 확대율이 방향을
+    가리지 않는다는 성질을 그대로 옮긴 것이고, 덕분에 역함수가 닫힌 형태로
+    나와서 remap 좌표맵을 정확히 만들 수 있다.
+
+    (휘어진 사진, 종이 마스크) 반환.
+    """
+    h, w = page.shape[:2]
+    u = np.linspace(0.0, 1.0, w)
+    if side == "left":
+        f = (1.0 - u) ** 2
+    elif side == "right":
+        f = u**2
+    else:  # "center" — 펼침면은 가운데(책등)가 가장 멀다
+        g = np.exp(-((u - 0.5) ** 2) / (2 * 0.22**2))
+        f = (g - g[0]) / (1.0 - g[0])
+
+    m = 1.0 / (1.0 + strength * f)  # 국소 확대율 (멀수록 작다)
+    x_img = np.concatenate([[0.0], np.cumsum(0.5 * (m[:-1] + m[1:]))])
+    out_w = int(np.ceil(x_img[-1])) + 1
+    out_h = int(np.ceil((h - 1) * m.max())) + 1
+    yc = (out_h - 1) * 0.5
+
+    cols = np.arange(out_w, dtype=np.float64)
+    src_x = np.interp(cols, x_img, np.arange(w, dtype=np.float64))
+    m_at = np.interp(src_x, np.arange(w, dtype=np.float64), m)
+
+    rows = np.arange(out_h, dtype=np.float64)[:, None]
+    map_y = (rows - yc) / m_at[None, :] + (h - 1) * 0.5
+    map_x = np.tile(src_x[None, :], (out_h, 1))
+
+    inside = ((map_y >= 0) & (map_y <= h - 1)).astype(np.uint8) * 255
+    warped = cv2.remap(page, map_x.astype(np.float32), map_y.astype(np.float32),
+                       cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
+    return warped, inside
+
+
 def spread(left: np.ndarray, right: np.ndarray, gutter_px: int = 26) -> np.ndarray:
     """두 페이지를 붙이고 가운데에 책등 그림자를 넣는다."""
     h = min(left.shape[0], right.shape[0])
@@ -96,6 +142,7 @@ def photograph(
     tilt: float = 0.18,
     margin: float = 0.12,
     lighting: float = 0.45,
+    page_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """페이지를 배경 위에 원근 왜곡 + 조명 얼룩을 넣어 배치. (사진, 정답코너) 반환."""
     CW, CH = canvas
@@ -122,8 +169,9 @@ def photograph(
     src = np.array([[0, 0], [pw - 1, 0], [pw - 1, ph - 1], [0, ph - 1]], np.float32)
     M = cv2.getPerspectiveTransform(src, dst)
     warped = cv2.warpPerspective(page, M, (CW, CH), flags=cv2.INTER_CUBIC)
-    mask = cv2.warpPerspective(np.full((ph, pw), 255, np.uint8), M, (CW, CH),
-                               flags=cv2.INTER_NEAREST)
+    # 종이 모양이 사각형이 아닐 수 있다 (bend가 만든 오므라든 실루엣)
+    src_mask = page_mask if page_mask is not None else np.full((ph, pw), 255, np.uint8)
+    mask = cv2.warpPerspective(src_mask, M, (CW, CH), flags=cv2.INTER_NEAREST)
 
     m3 = (mask[:, :, None] > 127)
     scene = np.where(m3, warped, scene)
@@ -177,7 +225,44 @@ def main() -> None:
     truth["spread_curled"] = {"corners": corners.tolist(), "kind": "spread"}
 
     (out_dir / "truth.json").write_text(json.dumps(truth, indent=2), encoding="utf-8")
-    print(f"{len(truth)}개 생성 → {out_dir.resolve()}")
+
+    # --- 테두리까지 휘는 사진 (곡선 검출용) ---------------------------------
+    # truth.json에 섞지 않고 따로 둔다. 여기 있는 사진들은 애초에 사각형으로
+    # 표현할 수 없어서, 코너 오차라는 잣대 자체가 성립하지 않기 때문이다.
+    bent: dict[str, dict] = {}
+    flat_single = make_page(title="CHAPTER THREE")
+    flat_spread = spread(make_page(title="CHAPTER FOUR"), make_page(title="CHAPTER FOUR"))
+    bent_cases = [
+        ("bent_single", flat_single, dict(strength=0.30, side="left"),
+         dict(canvas=portrait, bg_color=(105, 92, 84), tilt=0.06, lighting=0.35)),
+        ("bent_single_strong", flat_single, dict(strength=0.55, side="left"),
+         dict(canvas=portrait, bg_color=(80, 74, 70), tilt=0.10, lighting=0.45)),
+        # 비스듬히 찍은 데다 휘기까지 한 경우. 곡선 워프는 쿤스 패치라 원근을
+        # 호모그래피만큼 정확히 풀지 못하는데, 그 한계가 어디쯤인지 재는 표본이다.
+        ("bent_single_tilted", flat_single, dict(strength=0.30, side="left"),
+         dict(canvas=portrait, bg_color=(100, 90, 84), tilt=0.24, lighting=0.40),
+         0.06),
+        ("bent_spread", flat_spread, dict(strength=0.34, side="center"),
+         dict(canvas=(1800, 1150), bg_color=(95, 88, 80), tilt=0.06, margin=0.08,
+              lighting=0.40)),
+    ]
+    for case in bent_cases:
+        name, flat, bkw, pkw = case[:4]
+        warped, pmask = bend(flat, **bkw)
+        img, corners = photograph(warped, page_mask=pmask, **pkw)
+        imwrite(out_dir / f"{name}.jpg", img, quality=94)
+        bent[name] = {
+            "corners": corners.tolist(),
+            "flat_aspect": flat.shape[1] / flat.shape[0],
+            "kind": "spread" if bkw["side"] == "center" else "single",
+            # 곡선 보정이 이만큼까지 나빠지는 건 알려진 한계로 봐준다
+            # (tools/eval_curve.py, bookscan/warp.curved_maps 주석 참고)
+            "aspect_tolerance": case[4] if len(case) > 4 else 0.01,
+            **bkw,
+        }
+    (out_dir / "curve_truth.json").write_text(json.dumps(bent, indent=2), encoding="utf-8")
+
+    print(f"{len(truth)}개 + 휜 테두리 {len(bent)}개 생성 → {out_dir.resolve()}")
 
 
 if __name__ == "__main__":

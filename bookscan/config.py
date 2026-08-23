@@ -39,6 +39,9 @@ class PageSettings:
     #: 자동으로 축을 맞춘 뒤 상하가 뒤집혔으면 여기에 180을 준다.
     rotate: int = 0
     dewarp: bool = True
+    #: 테두리를 직선 넷이 아니라 곡선 넷으로 잡고, 휜 만큼 펴서 원근 보정을 한다.
+    #: 펼친 책처럼 종이가 말려 들어간 사진에서만 동작하고, 평평하면 저절로 꺼진다.
+    curve: bool = True
     #: 책 실루엣을 따로 따서 그 경계로 재단한다 (책상·바닥 제거 + 테두리 펴기).
     trim: bool = True
     #: 페이지 검출에 쓸 모델 id (bookscan/models/catalog.py 참고).
