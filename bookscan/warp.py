@@ -21,6 +21,13 @@ ASPECT_PRESETS: dict[str, float | None] = {
 
 #: 곡선 워프 좌표맵을 만들 격자. 맵이 매끄러워서 성기게 만들어 늘려도 손실이 없다.
 MAP_GRID = 512
+#: 종이 비율을 못박을 때, 이미 이만큼 안쪽이면 건드리지 않는다. 맞는 걸 다시
+#: 리샘플해서 흐리게 만들 이유가 없다.
+PAPER_TOLERANCE = 0.01
+#: 비율을 맞추려고 한쪽 축을 늘리는 배율의 상한. 이걸 넘어야 한다면 비율이
+#: 틀린 게 아니라 **다른 게 틀린 것**이다 (펼침면이 안 쪼개졌거나, 페이지가 잘려
+#: 나갔거나). 그럴 때 억지로 맞추면 멀쩡한 축까지 같이 망가진다.
+MAX_PAPER_CORRECTION = 1.25
 #: 국소 확대율 보정의 상한. 책등 바로 앞은 종이가 거의 옆을 보고 있어서 이론상
 #: 확대율이 0으로 가는데, 그 근처는 테두리 측정 자체가 못 믿을 곳이다. 실제 책의
 #: 눌림은 1.2~1.35배 수준이라 1.5면 넉넉하면서도 폭주를 막는다.
@@ -227,3 +234,59 @@ def clamp_corners(corners: np.ndarray | list, shape: tuple[int, int]) -> np.ndar
     q[:, 0] = np.clip(q[:, 0], -w * 0.02, w * 1.02)
     q[:, 1] = np.clip(q[:, 1], -h * 0.02, h * 1.02)
     return q
+
+
+def fit_paper(bgr: np.ndarray, aspect: str = "auto", spread: bool = False,
+              max_long_edge: int = 3500) -> tuple[np.ndarray, str]:
+    """결과를 지정한 종이 비율로 못박는다. (이미지, 사유)
+
+    비율을 **재는** 대신 **아는** 값을 쓴다. 이게 이득인 이유는, 이 파이프라인이
+    비율을 틀리는 방식이 정확히 여기서 고쳐지는 종류이기 때문이다. 테두리만
+    보고서는 "책이 접혀서 한쪽이 멀어진 것"과 "평평한 종이를 비스듬히 찍은 것"을
+    구별할 수 없고(`curved_maps` 참고), 그 혼동은 **전역 배율 오차 하나**로
+    나타난다. 판형을 알면 그 자유도가 통째로 사라진다. 반대로 국소 왜곡은 하나도
+    못 고친다. 전역 배율 하나를 바로잡을 뿐이다.
+
+    목표 비율은 하나가 아니라 셋이다. 세로 낱장(r), 가로로 누운 낱장(1/r),
+    그리고 **쪼개지 않은 펼침면**(2r — 세로 낱장 둘이 나란히). 셋 중 잰 값에
+    가장 가까운 것으로 스냅한다. `spread`를 알면 후보를 하나로 줄이지만, 그 힌트를
+    믿고만 있을 수는 없다. 사용자가 펼침면을 "한 면"으로 강제하면 힌트가 안 온다.
+
+    후보를 가로/세로만 보고 뒤집던 첫 판은 여기서 틀렸다. A4는 비율이 1/√2라
+    `2r`과 `1/r`이 **우연히 같아서** 맞는 것처럼 보이는데, Letter는 1.545 대
+    1.294로 크게 갈라진다. 실제로 펼침면 비율을 그쪽으로 끌어다 놓고 나빠졌다
+    (오차 0.038 → 0.114).
+    """
+    ratio = ASPECT_PRESETS.get(aspect)
+    if ratio is None:
+        return bgr, ""
+    h, w = bgr.shape[:2]
+    if h < 16 or w < 16:
+        return bgr, ""
+
+    have = w / h
+    cands = [(2.0 * ratio, "펼침면")] if spread else [
+        (ratio, "세로"), (1.0 / ratio, "가로"), (2.0 * ratio, "펼침면")]
+    # 배율 오차라서 로그 거리로 고른다 (1.5배 늘리는 것과 1/1.5로 줄이는 것은 같은 잘못)
+    want, kind = min(cands, key=lambda c: abs(np.log(have / c[0])))
+    tag = f"{aspect.upper()} {kind}"
+
+    if abs(have / want - 1.0) < PAPER_TOLERANCE:
+        return bgr, f"{tag} 비율 (이미 맞음)"
+
+    # 면적을 유지해 리샘플로 잃는 해상도를 최소화한다. 덕분에 한 축을 크게 바꿔야
+    # 할 때도 축마다의 변형은 그 절반쯤으로 나뉜다.
+    area = float(w) * float(h)
+    nh = float(np.sqrt(area / want))
+    nw = nh * want
+    corr = max(nw / w, nh / h, w / max(nw, 1e-6), h / max(nh, 1e-6))
+    if corr > MAX_PAPER_CORRECTION:
+        return bgr, (f"{tag} 비율 건너뜀 — 잰 비율 {have:.2f}이 목표 {want:.2f}와 "
+                     f"너무 다름 ({corr:.2f}배). 비율이 아니라 다른 게 틀렸을 것")
+
+    s = max_long_edge / max(nw, nh)
+    if s < 1.0:
+        nw, nh = nw * s, nh * s
+    out = cv2.resize(bgr, (max(1, round(nw)), max(1, round(nh))),
+                     interpolation=cv2.INTER_AREA if nw * nh < area else cv2.INTER_CUBIC)
+    return out, f"{tag} 비율로 맞춤 ({have:.3f} → {want:.3f})"

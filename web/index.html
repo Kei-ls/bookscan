@@ -106,6 +106,19 @@
         </div>
 
         <div class="field">
+          <label>종이 비율</label>
+          <select id="paperSelect">
+            <option value="auto">사진에서 잰 대로</option>
+            <option value="a4">A4 (210×297)</option>
+            <option value="b5">B5 (176×250)</option>
+            <option value="letter">Letter (8.5×11)</option>
+          </select>
+          <p class="hint small">판형을 알면 비율을 재지 않고 못박습니다. 테두리만 봐서는
+            "책이 접힌 것"과 "비스듬히 찍은 것"을 구별할 수 없어 비율이 조금 틀어지는데,
+            여기서 그 오차가 사라집니다. 펼침면은 쪼갠 뒤 낱장에 적용됩니다.</p>
+        </div>
+
+        <div class="field">
           <label>검출 모델</label>
           <select id="detectorSelect"></select>
           <p id="detectorHint" class="hint small"></p>

@@ -9,6 +9,10 @@
   * **글줄 휘어짐** — 테두리를 편 만큼 안쪽 글줄도 같이 펴져야 한다.
     세로 보정(쿤스 패치)이 제 몫을 하는지 여기서 드러난다.
 
+세 번째 줄 `판형`은 곡선 보정에 더해 **낱장 판형을 아는 경우**(`PageSettings.paper`)
+를 잰다. 사용자가 "이 책은 A4다"라고 알려준 상황이다. 여기서 남는 오차는 프리셋과
+합성 페이지의 실제 비율 차이(0.707 대 0.720 = 1.8%)라 이게 바닥이다.
+
 곡면 펴기(`dewarp.py`)는 꺼 놓고 잰다. 켜 두면 두 단계 중 어느 쪽 공인지
 구별할 수 없기 때문이다. 실제 처리에서는 둘 다 켜져서, 테두리로 큰 왜곡을
 잡고 글줄로 남은 잔재를 다듬는다.
@@ -31,6 +35,7 @@ from bookscan.config import PageSettings  # noqa: E402
 from bookscan.dewarp import MIN_LINES, find_text_lines  # noqa: E402
 from bookscan.imgio import imread  # noqa: E402
 from bookscan.pipeline import process  # noqa: E402
+from bookscan.warp import ASPECT_PRESETS  # noqa: E402
 
 
 def line_bow(bgr: np.ndarray) -> float | None:
@@ -72,50 +77,64 @@ def main() -> int:
         return 1
     truth = json.loads(truth_path.read_text(encoding="utf-8"))
 
-    print(f"{'case':<20} {'곡선':<5} {'가로세로비':>11} {'비오차':>8} "
+    print(f"{'case':<20} {'곡선':<7} {'가로세로비':>11} {'비오차':>8} "
           f"{'글줄휘어짐':>11} {'ms':>6}")
-    print("-" * 70)
+    print("-" * 72)
 
     worse: list[str] = []
     for name, meta in truth.items():
         img = imread(root / f"{name}.jpg")
         want = float(meta["flat_aspect"])
-        got: dict[bool, tuple[float, float | None]] = {}
-        for use in (False, True):
+        # 사용자는 **낱장** 판형을 안다. 정답이 1을 넘으면 펼침면이라 반으로 나눠 본다.
+        sheet = want if want < 1.0 else want / 2.0
+        best = min((k for k in ASPECT_PRESETS if ASPECT_PRESETS[k]),
+                   key=lambda k: abs(ASPECT_PRESETS[k] / sheet - 1))
+
+        got: dict[str, tuple[float, float | None]] = {}
+        for use, paper in ((False, "auto"), (True, "auto"), (True, best)):
             # 분할을 막아 통짜로 재고, 곡면 펴기는 꺼서 기하 단계만 본다
-            st = PageSettings(curve=use, dewarp=False, spread="single", auto_rotate=False)
+            st = PageSettings(curve=use, dewarp=False, spread="single",
+                              auto_rotate=False, paper=paper)
             t0 = time.perf_counter()
             res = process(img, st)
             ms = (time.perf_counter() - t0) * 1000
             page = res.pages[0].image
             h, w = page.shape[:2]
             aspect = w / max(h, 1)
-            got[use] = (aspect, line_bow(page))
-            bow = got[use][1]
-            print(f"{name if not use else '':<20} {'켬' if use else '끔':<5} "
+            key = paper if paper != "auto" else ("on" if use else "off")
+            got[key] = (aspect, line_bow(page))
+            bow = got[key][1]
+            label = {"off": "끔", "on": "켬"}.get(key, f"+{best}")
+            print(f"{name if key == 'off' else '':<20} {label:<7} "
                   f"{aspect:>11.3f} {abs(aspect / want - 1):>8.3f} "
                   f"{('%11.4f' % bow) if bow is not None else '          -'} {ms:>6.0f}")
 
-        off_err = abs(got[False][0] / want - 1)
-        on_err = abs(got[True][0] / want - 1)
-        off_bow, on_bow = got[False][1], got[True][1]
+        off_err = abs(got["off"][0] / want - 1)
+        on_err = abs(got["on"][0] / want - 1)
+        paper_err = abs(got[best][0] / want - 1)
+        off_bow, on_bow = got["off"][1], got["on"][1]
         tol = float(meta.get("aspect_tolerance", 0.01))
         if on_err > off_err + tol:
             worse.append(f"{name}: 비율 오차가 커짐 {off_err:.3f} → {on_err:.3f}")
         elif on_err > off_err:
             print(f"{'':<20} 알려진 한계: 비율 오차 {off_err:.3f} → {on_err:.3f} "
                   f"(허용 +{tol:.2f}) — 많이 비스듬한 사진은 접힘과 기울기를 구별 못 함")
+        # 판형을 알려줬는데 모르는 것만 못하면 그건 명백한 버그다
+        if paper_err > on_err + 0.01:
+            worse.append(f"{name}: 판형({best})을 알려줬는데 오히려 나빠짐 "
+                         f"{on_err:.3f} → {paper_err:.3f}")
         if off_bow is not None and on_bow is not None and on_bow > off_bow + 0.002:
             worse.append(f"{name}: 글줄이 더 휘었음 {off_bow:.4f} → {on_bow:.4f}")
-        print(f"{'':<20} {'정답':<5} {want:>11.3f}")
-        print("-" * 70)
+        print(f"{'':<20} {'정답':<7} {want:>11.3f}")
+        print("-" * 72)
 
     if worse:
         print("확인 필요:")
         for w in worse:
             print("  " + w)
         return 1
-    print("곡선 보정이 모든 사진에서 비율과 글줄을 개선했거나 유지했습니다.")
+    print("곡선 보정이 모든 사진에서 비율과 글줄을 개선했거나 유지했고, "
+          "판형을 알려주면 더 좋아집니다.")
     return 0
 
 

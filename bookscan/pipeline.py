@@ -27,8 +27,8 @@ from .models import segment as model_segment
 from .orient import estimate_axis
 from .pagecurve import CURVE_POINTS, detect_curve
 from .spread import SpreadResult, detect_gutter, split_spread
-from .warp import (clamp_corners, curved_maps, remap_mask, warp_curved, warp_mask,
-                   warp_page, warp_transform)
+from .warp import (clamp_corners, curved_maps, fit_paper, remap_mask, warp_curved,
+                   warp_mask, warp_page, warp_transform)
 
 #: 테두리 폐곡선을 UI로 보낼 때 이만큼 건너뛰며 솎아낸다 (한 변당 약 24점).
 OUTLINE_STEP = max(1, CURVE_POINTS // 24)
@@ -173,11 +173,19 @@ def process(original: np.ndarray, settings: PageSettings | None = None) -> Proce
     else:
         parts = [PageImage(warped, None)]
 
-    # --- 9. 각 페이지를 펴고 보정 ---
+    # --- 9. 각 페이지를 펴고, 비율을 맞추고, 보정 ---
+    # 비율 맞추기는 분할 뒤 낱장에 적용한다. 펼침면(1.4)에 낱장 비율(0.7)을
+    # 씌우면 폭이 두 배가 된다. 화질 보정보다는 먼저 해서, 샤프닝한 결과를
+    # 다시 리샘플해 뭉개는 일이 없게 한다.
     for part in parts:
         dw = dewarp(part.image, enabled=st.dewarp)
         part.image = dw.image
         part.notes.append(f"곡면 펴기: {dw.reason}")
+        part.image, paper_note = fit_paper(
+            part.image, st.paper, spread=(part.half is None and sp.is_spread),
+            max_long_edge=MAX_OUTPUT_LONG_EDGE)
+        if paper_note:
+            part.notes.append(paper_note)
         part.image = enhance(
             part.image,
             mode=st.mode,

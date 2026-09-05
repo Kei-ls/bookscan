@@ -255,6 +255,7 @@ class ReprocessBody(BaseModel):
     auto_rotate: bool | None = None
     dewarp: bool | None = None
     curve: bool | None = None
+    paper: str | None = None
     trim: bool | None = None
     detector: str | None = None
     spread: str | None = None
@@ -294,6 +295,8 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         st.dewarp = bool(body.dewarp)
     if body.curve is not None:
         st.curve = bool(body.curve)
+    if body.paper is not None:
+        st.paper = body.paper
     if body.trim is not None:
         st.trim = bool(body.trim)
     if body.detector is not None:

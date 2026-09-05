@@ -13,6 +13,8 @@ WEB_DIR = ROOT / "web"
 
 Mode = Literal["color", "gray", "bw"]
 SpreadMode = Literal["auto", "single", "split"]
+#: 결과 페이지의 가로세로비. "auto"는 사진에서 잰 값을 그대로 쓴다.
+PaperMode = Literal["auto", "a4", "letter", "b5"]
 
 #: 검출/미리보기 계산에 쓰는 작업본의 긴 변 길이. 원본은 최종 워프에만 쓴다.
 WORK_LONG_EDGE = 1500
@@ -48,6 +50,10 @@ class PageSettings:
     #: "classic"은 설치할 것이 없는 내장 알고리즘, 나머지는 선택 설치형 신경망이다.
     detector: str = "classic"
     spread: SpreadMode = "auto"
+    #: 낱장의 가로세로비를 아는 판형으로 못박는다 (`warp.fit_paper`).
+    #: 테두리만 보면 접힘과 기울기를 구별할 수 없어 비율이 조금 틀어지는데,
+    #: 판형을 알면 그 자유도가 사라진다. "auto"면 잰 값을 그대로 쓴다.
+    paper: PaperMode = "auto"
     #: 워프 결과 폭 기준 0~1로 정규화한 책등 위치. None이면 자동.
     gutter: float | None = None
     #: 대비/밝기 미세조정 (-100..100)

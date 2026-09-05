@@ -186,6 +186,7 @@ function syncControls() {
   $("#trimToggle").checked = st.trim !== false;
   syncDetectorSelect(st.detector || "classic");
   $("#curveToggle").checked = st.curve !== false;
+  $("#paperSelect").value = st.paper || "auto";
   $("#dewarpToggle").checked = !!st.dewarp;
   $("#brightRange").value = st.brightness || 0;
   $("#brightVal").textContent = st.brightness || 0;
@@ -310,6 +311,7 @@ $("#autoRotateToggle").onchange = (e) => {
 $("#trimToggle").onchange = (e) => { state.editing.settings.trim = e.target.checked; };
 $("#dewarpToggle").onchange = (e) => { state.editing.settings.dewarp = e.target.checked; };
 $("#curveToggle").onchange = (e) => { state.editing.settings.curve = e.target.checked; };
+$("#paperSelect").onchange = (e) => { state.editing.settings.paper = e.target.value; };
 $("#brightRange").oninput = (e) => {
   state.editing.settings.brightness = +e.target.value; $("#brightVal").textContent = e.target.value;
 };
@@ -352,6 +354,7 @@ $("#applyEdit").onclick = async () => {
         mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate,
         dewarp: st.dewarp, curve: st.curve, trim: st.trim, detector: st.detector,
         spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
+        paper: st.paper || "auto",
         brightness: st.brightness, contrast: st.contrast,
       }),
     });
