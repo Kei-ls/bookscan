@@ -76,6 +76,10 @@ MIN_EDGE_STEP = 6.0
 #: 한쪽이 일관되게 밝다. 부호가 반반이면 잡음을 본 것이다.
 MIN_STEP_AGREE = 0.70
 #: 이보다 덜 휘면 곡선 취급할 이유가 없다 (현 길이 대비)
+#: 모서리를 잡을 때 곡선 끝에서 이 비율만큼을 써서 접선을 세운다.
+CORNER_SPAN = 0.12
+#: 교점이 두 끝점의 중간에서 이 비율(변 길이 대비)보다 멀면 못 믿고 중간을 쓴다.
+MAX_CORNER_JUMP = 0.20
 MIN_BOW = 0.008
 #: 이보다 크면 테두리가 아니라 엉뚱한 걸 따라간 것으로 본다
 MAX_BOW = 0.25
@@ -326,18 +330,59 @@ def _fit_side(gray: np.ndarray, grad: np.ndarray, mask: np.ndarray | None,
     return pts.astype(np.float32), _bow(coef, tt) / length, src
 
 
-def _stitch(curves: list[np.ndarray]) -> list[np.ndarray]:
-    """네 곡선의 끝점을 서로 맞춰 닫힌 테두리로 만든다.
+def _end_dir(c: np.ndarray, at_start: bool) -> tuple[np.ndarray, np.ndarray]:
+    """곡선 끝부분에 맞춘 직선. (지나는 점, 단위 방향) 반환."""
+    k = int(np.clip(len(c) * CORNER_SPAN, 4, len(c)))
+    seg = (c[:k] if at_start else c[-k:]).astype(np.float64)
+    p0 = seg.mean(axis=0)
+    d = np.linalg.svd(seg - p0, full_matrices=False)[2][0]   # 최대 분산 방향
+    return p0, d
 
-    변마다 따로 맞춘 곡선이라 모서리에서 몇 픽셀씩 어긋난다. 이웃한 두 곡선의
-    끝점 중간을 새 모서리로 삼고, 각 곡선에 선형 램프를 더해 거기에 닿게 한다.
-    램프는 양 끝에서만 크고 가운데서는 거의 0이라 곡선의 모양은 그대로 남는다.
+
+def _corner(c0: np.ndarray, start0: bool, c1: np.ndarray, start1: bool) -> np.ndarray:
+    """이웃한 두 곡선이 만나는 모서리.
+
+    끝점의 **중간**을 쓰면 안 된다. 각 곡선은 자기 변에 수직인 방향만 잰다. 위쪽
+    곡선은 모서리의 y를 알지만 x는 모르고, 왼쪽 곡선은 그 반대다. 중간을 잡으면
+    아는 값을 모르는 값 쪽으로 절반 끌고 오게 되고, 그 오차가 아래 램프를 타고
+    **곡선 전체로** 번진다. 실측: 그 때문에 정답과 1px이던 곡선이 25px 밀렸다
+    (끝점끼리는 최대 99px 벌어져 있었다).
+
+    두 끝 접선의 교점을 쓰면 각 곡선이 아는 것만 기여한다. 두 선이 나란해서
+    교점이 엉뚱한 데로 튀면 그때만 중간으로 되돌아간다.
+    """
+    p0, d0 = _end_dir(c0, start0)
+    p1, d1 = _end_dir(c1, start1)
+    mid = ((c0[0] if start0 else c0[-1]) + (c1[0] if start1 else c1[-1])) * 0.5
+    den = float(d0[0] * d1[1] - d0[1] * d1[0])
+    if abs(den) < 1e-9:
+        return mid.astype(np.float32)
+    w = p1 - p0
+    t = float(w[0] * d1[1] - w[1] * d1[0]) / den
+    hit = p0 + t * d0
+    limit = MAX_CORNER_JUMP * min(_span(c0), _span(c1))
+    if not np.isfinite(hit).all() or float(np.linalg.norm(hit - mid)) > limit:
+        return mid.astype(np.float32)
+    return hit.astype(np.float32)
+
+
+def _span(c: np.ndarray) -> float:
+    return float(np.linalg.norm(c[-1] - c[0]))
+
+
+def _stitch(curves: list[np.ndarray]) -> list[np.ndarray]:
+    """네 곡선의 끝을 서로 맞춰 닫힌 테두리로 만든다.
+
+    변마다 따로 맞춘 곡선이라 모서리에서 어긋난다. 이웃한 두 곡선의 끝 접선이
+    만나는 점을 새 모서리로 삼고(`_corner` 참고), 각 곡선에 선형 램프를 더해
+    거기에 닿게 한다. 램프는 양 끝에서만 크고 가운데서는 거의 0이라 곡선의
+    모양은 그대로 남는다.
     """
     top, bottom, left, right = curves
-    tl = (top[0] + left[0]) * 0.5
-    tr = (top[-1] + right[0]) * 0.5
-    bl = (bottom[0] + left[-1]) * 0.5
-    br = (bottom[-1] + right[-1]) * 0.5
+    tl = _corner(top, True, left, True)
+    tr = _corner(top, False, right, True)
+    bl = _corner(bottom, True, left, False)
+    br = _corner(bottom, False, right, False)
 
     def ramp(c: np.ndarray, p0: np.ndarray, p1: np.ndarray) -> np.ndarray:
         t = np.linspace(0.0, 1.0, len(c), dtype=np.float32)[:, None]

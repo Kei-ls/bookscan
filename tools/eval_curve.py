@@ -8,6 +8,9 @@
     가로 보정(`warp._flat_axis`)이 제 몫을 하는지 여기서 드러난다.
   * **글줄 휘어짐** — 테두리를 편 만큼 안쪽 글줄도 같이 펴져야 한다.
     세로 보정(쿤스 패치)이 제 몫을 하는지 여기서 드러난다.
+  * **테두리 정확도** — 검출한 곡선을 `<name>_mask.png`(정답 실루엣)와 직접 견준다.
+    위 두 지표는 **결과**를 보는 것이라 중간 단계의 오차가 서로 상쇄되면 놓친다.
+    실제로 곡선이 통째로 25픽셀 밀린 채로 두 지표를 통과한 적이 있다.
 
 세 번째 줄 `판형`은 곡선 보정에 더해 **낱장 판형을 아는 경우**(`PageSettings.paper`)
 를 잰다. 사용자가 "이 책은 A4다"라고 알려준 상황이다. 여기서 남는 오차는 프리셋과
@@ -32,7 +35,12 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from bookscan.config import PageSettings  # noqa: E402
+from bookscan.bookmask import book_mask  # noqa: E402
+from bookscan.config import WORK_LONG_EDGE  # noqa: E402
+from bookscan.detect import detect_page  # noqa: E402
 from bookscan.dewarp import MIN_LINES, find_text_lines  # noqa: E402
+from bookscan.imgio import fit_long_edge  # noqa: E402
+from bookscan.pagecurve import detect_curve  # noqa: E402
 from bookscan.imgio import imread  # noqa: E402
 from bookscan.pipeline import process  # noqa: E402
 from bookscan.warp import ASPECT_PRESETS  # noqa: E402
@@ -67,6 +75,43 @@ def line_bow(bgr: np.ndarray) -> float | None:
     if len(bows) < MIN_LINES:
         return None
     return float(np.mean(bows)) / max(h, 1)
+
+
+#: 검출한 테두리가 정답 실루엣에서 벗어나도 되는 기본 한계 (짧은 변 대비).
+#: 0.5%는 1500픽셀 작업본에서 7~8픽셀이다. 넉넉하면서도 예전의 25픽셀은 잡는다.
+#: 케이스별로 `curve_truth.json`의 `boundary_tolerance`가 덮어쓴다.
+
+
+def boundary_error(img: np.ndarray, mask_path: Path) -> tuple[float, float] | None:
+    """검출한 위/아래 곡선이 정답 실루엣에서 얼마나 벗어났나 (짧은 변 대비).
+
+    이 검사가 없던 동안 곡선이 통째로 **25픽셀** 밀려 있었고 아무도 몰랐다. 원인은
+    `_stitch`가 이웃한 두 곡선의 끝점을 평균 낸 것이었는데(위 곡선은 모서리의 y를
+    알고 왼쪽 곡선은 x를 아는데 둘을 섞었다), 모양은 정답과 0.6픽셀로 맞아서
+    가로세로비나 글줄 휘어짐 같은 **결과 지표로는 드러나지 않았다.** 중간 산출물을
+    직접 채점해야 잡힌다.
+    """
+    gt = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if gt is None:
+        return None
+    work, scale = fit_long_edge(img, WORK_LONG_EDGE)
+    det = detect_page(work)
+    curve = detect_curve(work, det.corners, mask=book_mask(work, det.corners))
+    if curve is None:
+        return None
+    g = cv2.resize(gt, (work.shape[1], work.shape[0]), interpolation=cv2.INTER_NEAREST) > 127
+    h, w = g.shape
+    col = g.any(axis=0)
+    top = np.where(col, np.argmax(g, axis=0), np.nan).astype(float)
+    bot = np.where(col, h - 1 - np.argmax(g[::-1], axis=0), np.nan).astype(float)
+    out = []
+    for pts, tru in ((curve.top, top), (curve.bottom, bot)):
+        xs = np.clip(np.round(pts[:, 0]).astype(int), 0, w - 1)
+        ok = col[xs]
+        if ok.sum() < 8:
+            return None
+        out.append(float(np.abs(pts[ok, 1] - tru[xs[ok]]).mean()) / min(h, w))
+    return out[0], out[1]
 
 
 def main() -> int:
@@ -126,6 +171,23 @@ def main() -> int:
         if off_bow is not None and on_bow is not None and on_bow > off_bow + 0.002:
             worse.append(f"{name}: 글줄이 더 휘었음 {off_bow:.4f} → {on_bow:.4f}")
         print(f"{'':<20} {'정답':<7} {want:>11.3f}")
+        if meta.get("mask"):
+            be = boundary_error(img, root / meta["mask"])
+            if be is None:
+                worse.append(f"{name}: 테두리 정확도를 재지 못함")
+            else:
+                btol = float(meta.get("boundary_tolerance", 0.005))
+                bad = max(be) > btol
+                note = ""
+                if bad:
+                    note = "  ← 벗어남"
+                elif btol > 0.005:
+                    note = "  (알려진 한계: 책등 주름을 3차식이 못 담음)"
+                print(f"{'':<20} {'테두리':<7} 정답 실루엣과 위 {be[0]*100:.2f}% "
+                      f"아래 {be[1]*100:.2f}% (한계 {btol*100:.1f}%){note}")
+                if bad:
+                    worse.append(f"{name}: 검출한 테두리가 정답에서 "
+                                 f"{max(be)*100:.2f}% 벗어남 (한계 {btol*100:.1f}%)")
         print("-" * 72)
 
     if worse:

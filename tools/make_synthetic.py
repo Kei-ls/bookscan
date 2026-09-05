@@ -143,8 +143,13 @@ def photograph(
     margin: float = 0.12,
     lighting: float = 0.45,
     page_mask: np.ndarray | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    """페이지를 배경 위에 원근 왜곡 + 조명 얼룩을 넣어 배치. (사진, 정답코너) 반환."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """페이지를 배경 위에 원근 왜곡 + 조명 얼룩을 넣어 배치.
+
+    (사진, 정답 코너, 정답 실루엣) 반환. 실루엣은 **사진 좌표계의 진짜 테두리**라,
+    검출한 곡선을 픽셀 단위로 채점할 수 있게 해 준다. 이게 없던 동안 곡선이 통째로
+    25픽셀 밀려 있는 걸 어떤 테스트도 잡지 못했다.
+    """
     CW, CH = canvas
     ph, pw = page.shape[:2]
 
@@ -189,7 +194,7 @@ def photograph(
     lit = scene.astype(np.float32) * field[:, :, None] * tint[None, None, :]
 
     out = np.clip(lit + RNG.normal(0, 3.0, lit.shape), 0, 255).astype(np.uint8)
-    return out, dst
+    return out, dst, mask
 
 
 def main() -> None:
@@ -213,13 +218,13 @@ def main() -> None:
                         tilt=0.10)),
     ]
     for name, kw in cases:
-        img, corners = photograph(**kw)
+        img, corners, _gt = photograph(**kw)
         imwrite(out_dir / f"{name}.jpg", img, quality=94)
         truth[name] = {"corners": corners.tolist(), "kind": "single"}
 
     sp = spread(curl(make_page(title="CHAPTER TWO"), 0.055, "left"),
                 curl(make_page(title="CHAPTER TWO"), 0.055, "right"))
-    img, corners = photograph(sp, canvas=(1800, 1150), bg_color=(95, 88, 80),
+    img, corners, _gt = photograph(sp, canvas=(1800, 1150), bg_color=(95, 88, 80),
                               tilt=0.10, margin=0.08, lighting=0.40)
     imwrite(out_dir / "spread_curled.jpg", img, quality=94)
     truth["spread_curled"] = {"corners": corners.tolist(), "kind": "spread"}
@@ -242,15 +247,21 @@ def main() -> None:
         ("bent_single_tilted", flat_single, dict(strength=0.30, side="left"),
          dict(canvas=portrait, bg_color=(100, 90, 84), tilt=0.24, lighting=0.40),
          0.06),
+        # 펼침면은 책등에 **국소 주름**이 있는데 3차식은 그걸 담지 못한다. 차수를
+        # 올리면 여기는 0.11%까지 좋아지지만 단면이 0.17% → 2.27%로 망가진다
+        # (양 끝을 빼고 맞춘 고차식이 모서리에서 날뛴다). 전역 다항식이 아니라
+        # 구간별 표현이 필요하다는 신호라, 지금 값을 알려진 한계로 고정해 둔다.
         ("bent_spread", flat_spread, dict(strength=0.34, side="center"),
          dict(canvas=(1800, 1150), bg_color=(95, 88, 80), tilt=0.06, margin=0.08,
-              lighting=0.40)),
+              lighting=0.40), 0.01, 0.012),
     ]
     for case in bent_cases:
         name, flat, bkw, pkw = case[:4]
         warped, pmask = bend(flat, **bkw)
-        img, corners = photograph(warped, page_mask=pmask, **pkw)
+        img, corners, gt = photograph(warped, page_mask=pmask, **pkw)
         imwrite(out_dir / f"{name}.jpg", img, quality=94)
+        # 정답 실루엣은 PNG로 (JPEG로 저장하면 테두리가 번져서 정답이 아니게 된다)
+        cv2.imwrite(str(out_dir / f"{name}_mask.png"), gt)
         bent[name] = {
             "corners": corners.tolist(),
             "flat_aspect": flat.shape[1] / flat.shape[0],
@@ -258,6 +269,9 @@ def main() -> None:
             # 곡선 보정이 이만큼까지 나빠지는 건 알려진 한계로 봐준다
             # (tools/eval_curve.py, bookscan/warp.curved_maps 주석 참고)
             "aspect_tolerance": case[4] if len(case) > 4 else 0.01,
+            #: 검출한 테두리가 정답 실루엣에서 벗어나도 되는 한계 (짧은 변 대비)
+            "boundary_tolerance": case[5] if len(case) > 5 else 0.005,
+            "mask": f"{name}_mask.png",
             **bkw,
         }
     (out_dir / "curve_truth.json").write_text(json.dumps(bent, indent=2), encoding="utf-8")
