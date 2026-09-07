@@ -22,6 +22,12 @@ class ModelInfo:
     summary: str
     #: 신경망을 쓰는가 (torch + 가중치가 필요한가)
     neural: bool = False
+    #: 이 가중치가 기대하는 입력 크기. 파인튜닝하며 올릴 수 있어서 모델마다 둔다.
+    #: U-Net은 5번 풀링하므로 32의 배수여야 한다.
+    input_size: tuple[int, int] = (256, 256)
+    #: 내려받을 곳이 없고 이 컴퓨터에서 직접 만들어야 하는 가중치인가.
+    #: 파일이 없으면 목록에 아예 띄우지 않는다 — 설치 버튼을 눌러도 받을 데가 없다.
+    local_only: bool = False
     weights_name: str = ""
     weights_url: str = ""
     weights_bytes: int = 0
@@ -71,7 +77,24 @@ HYBRID = ModelInfo(
     pip_index=DOCSCANNER.pip_index,
 )
 
-MODELS: dict[str, ModelInfo] = {m.id: m for m in (CLASSIC, DOCSCANNER, HYBRID)}
+FINETUNED = ModelInfo(
+    id="finetuned",
+    name="파인튜닝 (내 사진으로 학습)",
+    summary="`tools/finetune.py`로 직접 학습한 가중치를 씁니다. 입력 해상도가 높아 "
+            "책등 쪽 경계를 원본 기준 더 촘촘히 잡습니다. 가중치 파일이 있을 때만 "
+            "목록에 뜹니다.",
+    neural=True,
+    input_size=(384, 384),
+    local_only=True,
+    weights_name="Scanner-Detector-ft.pth",
+    source="tools/finetune.py",
+    license="원본 가중치에서 파생 — MIT (c) 2024 Saeed-Biabani",
+    pip_packages=DOCSCANNER.pip_packages,
+    pip_index=DOCSCANNER.pip_index,
+)
+
+MODELS: dict[str, ModelInfo] = {
+    m.id: m for m in (CLASSIC, DOCSCANNER, HYBRID, FINETUNED)}
 DEFAULT_MODEL = CLASSIC.id
 
 
@@ -82,10 +105,12 @@ def get(model_id: str | None) -> ModelInfo:
 def weights_for(model_id: str) -> ModelInfo:
     """hybrid처럼 자기 가중치가 없는 항목을 실제 가중치 주인으로 바꿔준다.
 
-    자기 weights_url을 가진 모델은 그대로 둔다 — 나중에 두 번째 신경망을 붙였을 때
+    자기 가중치 파일을 가진 모델은 그대로 둔다 — 나중에 두 번째 신경망을 붙였을 때
     말없이 Document-Scanner의 가중치를 쓰게 되면 안 된다.
     """
     info = get(model_id)
-    if info.neural and not info.weights_url:
+    # url이 아니라 **파일 이름**으로 따진다 — 파인튜닝한 가중치는 내려받을 곳이
+    # 없지만 엄연히 자기 것이다.
+    if info.neural and not info.weights_name:
         return DOCSCANNER
     return info

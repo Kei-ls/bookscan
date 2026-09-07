@@ -47,6 +47,10 @@ class Source:
     is_spread: bool = False
     gutter: float | None = None
     notes: list[str] = field(default_factory=list)
+    #: 이 경계가 정확하다고 사람이 확인해 준 사진. `tools/export_labels.py`가
+    #: 학습 자료로 뽑아가는 기준이다. 코너를 손으로 잡으면 자동으로 켜진다 —
+    #: 일부러 끌어다 놓은 자리라 그 자체가 확인이다.
+    verified: bool = False
     added: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -206,6 +210,8 @@ class Project:
 
             src.corners = result.corners
             src.outline = result.outline
+            if result.method == "manual":
+                src.verified = True
             src.confidence = result.confidence
             src.method = result.method
             src.is_spread = result.is_spread

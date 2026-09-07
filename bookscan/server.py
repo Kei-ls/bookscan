@@ -70,6 +70,7 @@ def source_json(project: Project, sid: str) -> dict:
         "corners": s.corners,
         "outline": s.outline,
         "notes": s.notes,
+        "verified": s.verified,
         "settings": s.settings.to_dict(),
     }
 
@@ -349,6 +350,24 @@ async def rotate_all(body: RotateAllBody) -> dict:
 
 class ReorderBody(BaseModel):
     order: list[str]
+
+
+class VerifyBody(BaseModel):
+    verified: bool = True
+
+
+@app.post("/api/sources/{sid}/verify")
+async def verify_source(sid: str, body: VerifyBody) -> dict:
+    """이 사진의 경계가 정확하다고 표시한다 (학습 자료로 쓰기 위해).
+
+    다시 처리하지 않는다 — 표시만 바꾸고 저장한다.
+    """
+    project = current_project()
+    if sid not in project.sources:
+        raise HTTPException(404, "원본이 없습니다.")
+    project.sources[sid].verified = bool(body.verified)
+    project.save()
+    return snapshot(project)
 
 
 @app.post("/api/pages/reorder")

@@ -196,6 +196,7 @@ function syncControls() {
   $("#contrastVal").textContent = st.contrast || 0;
 
   const src = state.sources[state.editing.sid];
+  $("#verifyToggle").checked = !!(src && src.verified);
   const g = st.gutter != null ? st.gutter : (src && src.gutter != null ? src.gutter : 0.5);
   $("#gutterRange").value = Math.round(g * 100);
   $("#gutterVal").textContent = Math.round(g * 100) + "%";
@@ -318,6 +319,21 @@ $("#trimToggle").onchange = (e) => { state.editing.settings.trim = e.target.chec
 $("#dewarpToggle").onchange = (e) => { state.editing.settings.dewarp = e.target.checked; };
 $("#curveToggle").onchange = (e) => { state.editing.settings.curve = e.target.checked; };
 $("#paperSelect").onchange = (e) => { state.editing.settings.paper = e.target.value; };
+
+// 확인 표시는 '적용'을 기다리지 않는다. 다시 처리할 일이 없는 표시일 뿐이고,
+// 잘 나온 사진을 눌러 두는 일이 번거로우면 아무도 안 누른다.
+$("#verifyToggle").onchange = async (e) => {
+  const on = e.target.checked;
+  try {
+    applySnapshot(await api(`/api/sources/${state.editing.sid}/verify`, {
+      method: "POST", body: JSON.stringify({ verified: on }),
+    }));
+    toast(on ? "학습 자료로 표시했습니다" : "표시를 해제했습니다", "good");
+  } catch (err) {
+    e.target.checked = !on;
+    toast("표시 실패: " + err.message, "bad");
+  }
+};
 $("#brightRange").oninput = (e) => {
   state.editing.settings.brightness = +e.target.value; $("#brightVal").textContent = e.target.value;
 };

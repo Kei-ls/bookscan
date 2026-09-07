@@ -8,6 +8,8 @@ input/*
 output/*
 !output/.gitkeep
 tests/synthetic/
+# 학습 자료로 뽑아낸 사진과 마스크 (export_labels.py). 사용자 사진이다.
+labels/
 # 내려받은 신경망 가중치 (122MB). 필요하면 UI에서 다시 받는다.
 # 앞의 /가 없으면 bookscan/models/ 소스 패키지까지 같이 무시된다.
 /models/

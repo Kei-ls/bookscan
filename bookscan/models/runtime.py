@@ -21,7 +21,7 @@ import cv2
 import numpy as np
 
 from .catalog import MODELS, ModelInfo, WEIGHTS_DIR, get, weights_for
-from .docscanner import INPUT_SIZE, build_model
+from .docscanner import build_model
 
 #: 마스크가 프레임에서 차지하는 면적이 이 범위를 벗어나면 실패로 본다.
 MIN_AREA_RATIO, MAX_AREA_RATIO = 0.03, 0.98
@@ -78,7 +78,9 @@ def status(model_id: str) -> dict:
 
 
 def status_all() -> list[dict]:
-    return [status(mid) for mid in MODELS]
+    """목록에 띄울 모델들. 만들어야만 생기는 가중치는 없으면 감춘다."""
+    return [status(mid) for mid, info in MODELS.items()
+            if not (info.local_only and not weights_installed(info))]
 
 
 # ------------------------------------------------------------------ 설치 동작
@@ -204,7 +206,8 @@ def segment(bgr: np.ndarray, model_id: str = "docscanner") -> np.ndarray | None:
 
     h, w = bgr.shape[:2]
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY) if bgr.ndim == 3 else bgr
-    small = cv2.resize(gray, INPUT_SIZE, interpolation=cv2.INTER_AREA).astype(np.float32)
+    small = cv2.resize(gray, info.input_size,
+                       interpolation=cv2.INTER_AREA).astype(np.float32)
     std = float(small.std())
     if std < 1e-6:
         return None  # 완전 균일한 사진 — 정규화하면 0으로 나눈다
