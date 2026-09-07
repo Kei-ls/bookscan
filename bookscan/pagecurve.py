@@ -84,6 +84,11 @@ MAX_CORNER_JUMP = 0.20
 MIN_BOW = 0.008
 #: 이보다 크면 테두리가 아니라 엉뚱한 걸 따라간 것으로 본다
 MAX_BOW = 0.25
+#: 못 찾아서 직선(사각형의 현)으로 대신할 수 있는 변의 수. 하나까지는 나머지
+#: 셋이 잰 휘어짐이 쓸 만하지만, 둘을 짐작으로 채우면 그건 측정이 아니다.
+MAX_STRAIGHT_SIDES = 1
+#: `sides` 순서에 맞춘 이름 (위, 아래, 왼쪽, 오른쪽)
+SIDE_LABELS = ("위", "아래", "왼쪽", "오른쪽")
 
 
 @dataclass
@@ -435,8 +440,8 @@ def guard_content(bgr: np.ndarray, curve: PageCurve) -> tuple[PageCurve, str]:
     if not any(d > 0 for d in dists):
         return curve, ""
 
-    names = ("위", "아래", "왼쪽", "오른쪽")
-    moved = ", ".join(f"{names[i]} {dists[i]:.0f}px" for i in range(4) if dists[i] > 0)
+    moved = ", ".join(f"{SIDE_LABELS[i]} {dists[i]:.0f}px"
+                      for i in range(4) if dists[i] > 0)
     return (shift_sides(curve, tuple(dists)),
             f"글자를 자르지 않도록 테두리를 넓힘 ({moved})")
 
@@ -471,19 +476,39 @@ def detect_curve(bgr: np.ndarray, quad: np.ndarray,
     curves: list[np.ndarray] = []
     bows: list[float] = []
     srcs: list[str] = []
-    for a, b, perp in sides:
+    straight: list[str] = []
+    for (a, b, perp), name in zip(sides, SIDE_LABELS):
         got = _fit_side(gray, grad, mask, a, b, center, max(24.0, perp))
         if got is None:
-            return None
+            # 한 변을 못 찾았다고 나머지 셋까지 버리지 않는다. 그 변만 사각형의
+            # 현으로 두고 나머지가 잰 휘어짐은 살린다.
+            #
+            # 넷을 다 버리던 때에 실제로 이런 일이 있었다: 책등 쪽 변을 안전
+            # 여백만큼 바깥으로 밀었더니 그 자리가 종이가 급하게 말려 들어가는
+            # 접힘부라 3차식 잔차가 한계를 넘었고, 그 한 변 때문에 멀쩡히 맞은
+            # 위·아래·왼쪽까지 통째로 날아가 곡선 보정이 통으로 빠졌다.
+            # 한 변을 직선으로 두는 손해는 그 변을 못 펴는 것뿐이지만, 넷을
+            # 버리는 손해는 페이지 전체를 못 펴는 것이다.
+            tt = np.linspace(0.0, 1.0, CURVE_POINTS, dtype=np.float32)
+            curves.append((a[None, :] + tt[:, None] * (b - a)[None, :]).astype(np.float32))
+            bows.append(0.0)
+            srcs.append("chord")
+            straight.append(name)
+            continue
         pts, bow, src = got
         curves.append(pts)
         bows.append(bow)
         srcs.append(src)
 
+    # 두 변 이상을 짐작으로 채웠다면 그건 테두리를 찾은 게 아니다.
+    if len(straight) > MAX_STRAIGHT_SIDES:
+        return None
+
     top, bottom, left, right = _stitch(curves)
     bows_t = (bows[0], bows[1], bows[2], bows[3])
     source = "mask" if srcs.count("mask") >= 3 else "edge"
     worst = max(abs(x) for x in bows_t)
+    note = f", {straight[0]} 변은 직선으로 대체" if straight else ""
 
     if worst > MAX_BOW:
         return PageCurve(top, bottom, left, right, bows_t, source, False,
@@ -492,4 +517,5 @@ def detect_curve(bgr: np.ndarray, quad: np.ndarray,
         return PageCurve(top, bottom, left, right, bows_t, source, False,
                          f"테두리가 거의 곧음 (휘어짐 {worst:.3f}) — 원근 보정만")
     return PageCurve(top, bottom, left, right, bows_t, source, True,
-                     f"굽은 테두리 검출 ({source}, 위 {bows_t[0]:+.3f} 아래 {bows_t[1]:+.3f})")
+                     f"굽은 테두리 검출 ({source}, 위 {bows_t[0]:+.3f} "
+                     f"아래 {bows_t[1]:+.3f}{note})")
