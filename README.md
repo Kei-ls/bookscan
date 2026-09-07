@@ -307,13 +307,23 @@ B5로 못박으면 전부 0.704가 된다. 펼침면을 쪼갠 두 반쪽이 서
 `이 경계가 정확함`을 눌러 표시가 남는다.
 
 ```bash
-python tools/export_labels.py --list      # 프로젝트별로 몇 장 확인됐는지
-python tools/export_labels.py             # labels/ 로 (사진, 마스크) 쌍 뽑기
-python tools/finetune.py labels --epochs 40
+python tools/export_labels.py --list   # 프로젝트별로 몇 장 확인됐는지
+python tools/export_labels.py          # labels/ 로 (사진, 마스크) 쌍 뽑기
+python -m labelcheck labels            # 훑어보고 나쁜 라벨 버리기 (8766 포트)
+python tools/finetune.py labels        # 로컬에서 학습 (CPU면 느리다)
 ```
 
-학습이 끝나면 UI의 `검출 모델`에 **파인튜닝**이 새로 뜬다(가중치 파일이 있을
-때만 뜬다). 내장 알고리즘과 견줘 보고 나은 쪽을 쓰면 된다.
+**뽑은 다음에는 반드시 한 번 훑어야 한다.** 편집 창에서 확인한 건 사각형 네 점인데
+실제로 라벨이 되는 건 **곡선 테두리**다. 그 곡선은 사람이 잡은 코너를 씨앗으로 다시
+계산되므로, 코너를 정확히 놓아도 곡선이 빗나갈 수 있다(실제로 책등 쪽에서 글자를
+자른 적이 있다). `labelcheck`가 마스크 바깥을 붉게 칠해 보여주므로, 글자가 거기
+걸쳐 있으면 버리면 된다. 잘못된 라벨 한 장은 없는 것보다 나쁘다.
+
+GPU가 없으면 **Colab**을 쓰는 편이 낫다. `labelcheck`의 `유지한 것만 kept/로 모으기`를
+누르고 그 폴더를 압축해 `notebooks/finetune_colab.ipynb`에 올리면 된다.
+
+학습이 끝나면 `.pth`를 `models/`에 넣는다. UI의 `검출 모델`에 **파인튜닝**이 새로
+뜬다(가중치 파일이 있을 때만 뜬다). 내장 알고리즘과 견줘 보고 나은 쪽을 쓰면 된다.
 
 입력 해상도를 256에서 **384로 올려서** 학습한다. 원본 체크포인트의 256×256은
 4284×5712 사진에서 한 칸이 원본 22픽셀이라, 책등 선을 몇 픽셀 안에서 놓는 일에는
@@ -328,7 +338,7 @@ python tools/finetune.py labels --epochs 40
   세어 경고한다.
 - **20쌍 미만이면 외우기만 한다.** 200~500쌍을 목표로 모으는 게 좋다.
 - **CPU 학습은 느리다.** 실측 384px에서 사진 한 장·한 에폭당 약 5초다. 300쌍을
-  40에폭 돌리면 CPU로 16시간쯤 걸린다. GPU가 있으면 20분 수준이다.
+  40에폭 돌리면 CPU로 16시간쯤 걸린다. Colab의 T4면 20분 수준이다.
 - 파인튜닝은 확률 분포도 같이 편다. 원본 체크포인트는 확률을 0.47~0.72에 뭉쳐
   놓아서 고정 문턱 0.5를 못 쓰는데(`runtime._binarize`의 우회), BCE로 이어
   학습하면 그 눌림이 펴진다.
@@ -347,6 +357,8 @@ bookscan/
     runtime.py    지연 로딩, 가중치 내려받기/검증, 추론
   bookmask.py   GrabCut으로 책 실루엣 따기
   booktrim.py   책 경계 곡선으로 배경 제거 + 테두리 펴기
+  content.py    본문 블록 안전선 (경계가 글자를 자르지 못하게)
+  spine.py      책등 쪽 변만 다르게 다루기
   spread.py     책등 검출 및 좌/우 분할
   dewarp.py     곡면 펴기 (+ 안전장치)
   enhance.py    조명 얼룩 제거, 대비, 컬러/회색/흑백
@@ -356,7 +368,9 @@ bookscan/
   camera.py     장치 열거, 캡처 스레드, 오버레이 MJPEG
   server.py     FastAPI 라우트
 web/            빌드 스텝 없는 바닐라 JS UI
-tools/          합성 이미지 생성기와 평가 스크립트
+labelcheck/     라벨 확인 프로그램 (bookscan과 별개로 도는 독립 프로그램)
+notebooks/      Colab 학습 노트북
+tools/          합성 이미지 생성기, 평가 스크립트, 라벨 뽑기와 파인튜닝
 input/          사진 넣는 곳
 output/         결과물
 ```

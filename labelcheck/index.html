@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>라벨 확인</title>
+<style>
+  :root {
+    --bg: #14161a; --panel: #1c1f26; --line: #2c313b; --ink: #e6e9ef;
+    --dim: #98a1b3; --keep: #3ddc84; --drop: #ff5c5c; --wait: #6b7484;
+    --accent: #5b9cff;
+  }
+  * { box-sizing: border-box; }
+  /* 격자 행을 100vh로 못박고 넘치는 건 감춘다. 행 높이를 auto로 두면 큰 사진
+     하나가 몸통을 늘려서 아래 판정 버튼이 화면 밖으로 밀려난다. */
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+    height: 100vh; overflow: hidden;
+    display: grid; grid-template-columns: 260px 1fr 300px;
+    grid-template-rows: 100vh; }
+
+  /* ------------------------------------------------------- 왼쪽: 목록 */
+  #list { border-right: 1px solid var(--line); overflow-y: auto; padding: 8px; }
+  .thumb { position: relative; width: 100%; margin-bottom: 8px; border-radius: 6px;
+    overflow: hidden; border: 3px solid var(--wait); cursor: pointer; background: #000; }
+  .thumb.on { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .thumb.keep { border-color: var(--keep); }
+  .thumb.drop { border-color: var(--drop); opacity: .45; }
+  .thumb img { display: block; width: 100%; height: 92px; object-fit: cover; }
+  .thumb b { position: absolute; left: 0; bottom: 0; right: 0; padding: 2px 6px;
+    font-size: 11px; font-weight: 500; background: rgba(0,0,0,.65);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ------------------------------------------------------- 가운데: 보기 */
+  #view { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  /* grid로 가운데 놓으면 암시적 행이 auto라 canvas의 max-height:100%가 기댈
+     확정 높이가 없다. 사진이 폭에만 맞춰지고 아래가 잘린다. flex는 컨테이너
+     높이가 확정이라 둘 다 지킨다. */
+  #stage { flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 12px; min-height: 0; overflow: hidden; }
+  #canvas { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px;
+    box-shadow: 0 6px 28px rgba(0,0,0,.5); }
+  #bar { border-top: 1px solid var(--line); padding: 10px 14px;
+    display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  #title { font-weight: 600; }
+  .tag { font-size: 12px; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); }
+  .tag.keep { color: var(--keep); border-color: var(--keep); }
+  .tag.drop { color: var(--drop); border-color: var(--drop); }
+  button { font: inherit; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.keep { border-color: var(--keep); color: var(--keep); }
+  button.drop { border-color: var(--drop); color: var(--drop); }
+  kbd { font: 11px/1 ui-monospace, monospace; background: #000; border: 1px solid var(--line);
+    border-radius: 4px; padding: 2px 5px; color: var(--dim); }
+
+  /* ------------------------------------------------------- 오른쪽: 통계 */
+  #side { border-left: 1px solid var(--line); overflow-y: auto; padding: 14px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--dim); margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .row { display: flex; justify-content: space-between; padding: 3px 0; }
+  .row span:last-child { font-variant-numeric: tabular-nums; }
+  .warn { background: #2a2015; border: 1px solid #6b4a1e; border-radius: 6px;
+    padding: 9px 11px; margin-bottom: 8px; font-size: 13px; color: #ffcf87; }
+  .hint { color: var(--dim); font-size: 12px; }
+  progress { width: 100%; height: 8px; }
+</style>
+</head>
+<body>
+
+<div id="list"></div>
+
+<div id="view">
+  <div id="stage"><canvas id="canvas"></canvas></div>
+  <div id="bar">
+    <span id="title">—</span>
+    <span id="verdictTag" class="tag">보류</span>
+    <span style="flex:1"></span>
+    <button id="keepBtn" class="keep">유지 <kbd>K</kbd></button>
+    <button id="dropBtn" class="drop">버림 <kbd>X</kbd></button>
+    <button id="undoBtn">보류 <kbd>U</kbd></button>
+    <button id="overlayBtn">가림막 <kbd>O</kbd></button>
+  </div>
+</div>
+
+<div id="side">
+  <h2>진행</h2>
+  <progress id="prog" value="0" max="1"></progress>
+  <div class="row"><span>전체</span><span id="sTotal">0</span></div>
+  <div class="row"><span style="color:var(--keep)">유지</span><span id="sKeep">0</span></div>
+  <div class="row"><span style="color:var(--drop)">버림</span><span id="sDrop">0</span></div>
+  <div class="row"><span style="color:var(--wait)">보류</span><span id="sWait">0</span></div>
+
+  <h2>유지한 자료의 구성</h2>
+  <div class="row"><span>손으로 고침</span><span id="sFixed">0</span></div>
+  <div id="sSpine"></div>
+
+  <h2 id="warnHead" hidden>살펴볼 것</h2>
+  <div id="warns"></div>
+
+  <h2>내보내기</h2>
+  <button id="exportBtn" style="width:100%">유지한 것만 <code>kept/</code>로 모으기</button>
+  <p class="hint" id="exportMsg">그 폴더를 압축해 Colab에 올리면 됩니다.</p>
+
+  <h2>단축키</h2>
+  <p class="hint">
+    <kbd>←</kbd> <kbd>→</kbd> 넘기기 · <kbd>K</kbd> 유지 · <kbd>X</kbd> 버림 ·
+    <kbd>U</kbd> 보류 · <kbd>O</kbd> 가림막 켜고 끄기<br><br>
+    유지/버림을 누르면 <b>자동으로 다음 장</b>으로 넘어갑니다. 판정은 누를 때마다
+    <code>review.json</code>에 바로 저장됩니다.
+  </p>
+
+  <h2>무엇을 보는가</h2>
+  <p class="hint">
+    빨갛게 덮인 곳이 <b>잘려나갈 부분</b>입니다. 글자가 거기 걸쳐 있으면
+    <b>버림</b>이 맞습니다 — 잘못된 라벨 한 장은 없는 것보다 나쁩니다.
+    모델이 그걸 정답이라고 배웁니다.
+  </p>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const canvas = $("#canvas"), ctx = canvas.getContext("2d");
+let items = [], cur = 0, showOverlay = true;
+let img = null, maskData = null;
+
+async function api(path, body) {
+  const res = await fetch(path, body ? {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  } : {});
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.status);
+  return res.json();
+}
+
+function renderList() {
+  const list = $("#list");
+  list.innerHTML = "";
+  items.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.className = `thumb ${it.verdict}` + (i === cur ? " on" : "");
+    d.innerHTML = `<img loading="lazy" src="/api/image/${encodeURIComponent(it.id)}"><b>${it.id}</b>`;
+    d.onclick = () => show(i);
+    list.appendChild(d);
+  });
+}
+
+function renderStats(st) {
+  $("#sTotal").textContent = st.total;
+  $("#sKeep").textContent = st.counts.keep;
+  $("#sDrop").textContent = st.counts.drop;
+  $("#sWait").textContent = st.counts.undecided;
+  $("#prog").max = st.total || 1;
+  $("#prog").value = st.counts.keep + st.counts.drop;
+  $("#sFixed").textContent = `${st.corrected} / ${st.counts.keep}`;
+  $("#sSpine").innerHTML = Object.entries(st.spine)
+    .map(([k, v]) => `<div class="row"><span>책등 ${k}</span><span>${v}</span></div>`).join("");
+  $("#warns").innerHTML = st.warnings.map((w) => `<div class="warn">${w}</div>`).join("");
+  $("#warnHead").hidden = st.warnings.length === 0;
+}
+
+// 마스크 바깥을 붉게 덮는다. 채워 넣는 대신 **잘려나갈 쪽**을 칠해야
+// "여기 글자가 걸쳐 있는가"를 눈으로 바로 판단할 수 있다.
+function paint() {
+  if (!img) return;
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  ctx.drawImage(img, 0, 0);
+  if (!showOverlay || !maskData) return;
+  const layer = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = layer.data, m = maskData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (m[i] > 127) continue;             // 마스크 안 = 남는 곳, 그대로 둔다
+    px[i]     = px[i] * 0.45 + 255 * 0.55;
+    px[i + 1] = px[i + 1] * 0.45;
+    px[i + 2] = px[i + 2] * 0.45 + 40 * 0.55;
+  }
+  ctx.putImageData(layer, 0, 0);
+}
+
+function show(i) {
+  if (!items.length) return;
+  cur = Math.max(0, Math.min(items.length - 1, i));
+  const it = items[cur];
+  $("#title").textContent = `${cur + 1} / ${items.length}  ·  ${it.id}`;
+  const tag = $("#verdictTag");
+  tag.className = "tag " + (it.verdict === "undecided" ? "" : it.verdict);
+  tag.textContent = { keep: "유지", drop: "버림", undecided: "보류" }[it.verdict];
+  renderList();
+  document.querySelector(".thumb.on")?.scrollIntoView({ block: "nearest" });
+
+  img = new Image();
+  maskData = null;
+  img.onload = () => {
+    const mi = new Image();
+    mi.onload = () => {
+      const off = document.createElement("canvas");
+      off.width = img.naturalWidth; off.height = img.naturalHeight;
+      const octx = off.getContext("2d", { willReadFrequently: true });
+      octx.drawImage(mi, 0, 0, off.width, off.height);
+      maskData = octx.getImageData(0, 0, off.width, off.height);
+      paint();
+    };
+    mi.onerror = paint;
+    mi.src = `/api/mask/${encodeURIComponent(it.id)}`;
+    paint();
+  };
+  img.src = `/api/image/${encodeURIComponent(it.id)}`;
+}
+
+async function judge(verdict) {
+  const it = items[cur];
+  if (!it) return;
+  const prev = it.verdict;
+  it.verdict = verdict;
+  try {
+    renderStats((await api("/api/verdict", { id: it.id, verdict })).stats);
+  } catch (err) {
+    it.verdict = prev;
+    alert("저장 실패: " + err.message);
+  }
+  if (verdict !== "undecided" && cur < items.length - 1) show(cur + 1);
+  else show(cur);
+}
+
+$("#keepBtn").onclick = () => judge("keep");
+$("#dropBtn").onclick = () => judge("drop");
+$("#undoBtn").onclick = () => judge("undecided");
+$("#overlayBtn").onclick = () => { showOverlay = !showOverlay; paint(); };
+$("#exportBtn").onclick = async () => {
+  try {
+    const r = await api("/api/export", {});
+    $("#exportMsg").textContent = `${r.count}장을 ${r.dir} 에 모았습니다. 압축해 올리세요.`;
+  } catch (err) { $("#exportMsg").textContent = "실패: " + err.message; }
+};
+
+window.addEventListener("keydown", (e) => {
+  const k = e.key.toLowerCase();
+  if (k === "arrowright" || k === "d") show(cur + 1);
+  else if (k === "arrowleft" || k === "a") show(cur - 1);
+  else if (k === "k") judge("keep");
+  else if (k === "x") judge("drop");
+  else if (k === "u") judge("undecided");
+  else if (k === "o") { showOverlay = !showOverlay; paint(); }
+  else return;
+  e.preventDefault();
+});
+
+(async () => {
+  const data = await api("/api/items");
+  items = data.items;
+  renderStats(data.stats);
+  // 훑다 만 자리에서 이어서 시작한다
+  const first = items.findIndex((i) => i.verdict === "undecided");
+  show(first < 0 ? 0 : first);
+})();
+</script>
+</body>
+</html>
