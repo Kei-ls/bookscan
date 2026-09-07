@@ -13,6 +13,8 @@ WEB_DIR = ROOT / "web"
 
 Mode = Literal["color", "gray", "bw"]
 SpreadMode = Literal["auto", "single", "split"]
+#: 찍은 페이지의 어느 변이 책등인가. "none"은 책등이 없는 낱장.
+SpineMode = Literal["auto", "left", "right", "none"]
 #: 결과 페이지의 가로세로비. "auto"는 사진에서 잰 값을 그대로 쓴다.
 PaperMode = Literal["auto", "a4", "letter", "b5"]
 
@@ -26,6 +28,11 @@ EDIT_LONG_EDGE = 1200
 MAX_OUTPUT_LONG_EDGE = 3500
 
 JPEG_QUALITY = 92
+
+#: 한 쪽만 찍은 페이지의 그럴듯한 가로세로비 범위. 벗어나면 **경고만** 한다.
+#: 고치지는 않는다 — 넓게 잡힌 크롭을 비율만 맞춰 눌러봐야 옆 페이지는 그대로
+#: 남고 글자만 찌그러진다. 무엇이 이상한지 알려주고 판단은 사람에게 맡긴다.
+SINGLE_PAGE_ASPECT = (0.55, 0.80)
 
 
 @dataclass
@@ -50,6 +57,11 @@ class PageSettings:
     #: "classic"은 설치할 것이 없는 내장 알고리즘, 나머지는 선택 설치형 신경망이다.
     detector: str = "classic"
     spread: SpreadMode = "auto"
+    #: 책등이 어느 변인지 (`bookscan/spine.py`). 이 변만 나머지 셋과 다르게
+    #: 다룬다 — 종이가 끝나는 자리가 아니라 접혀 들어가는 자리라, 찾을 단차가
+    #: 없고 대신 바깥으로 살짝 밀어 글자가 잘리지 않게 한다. "auto"는 근거가
+    #: 얕으면 기권하므로, 한 쪽씩 찍는다면 직접 골라주는 편이 확실하다.
+    spine: SpineMode = "auto"
     #: 낱장의 가로세로비를 아는 판형으로 못박는다 (`warp.fit_paper`).
     #: 테두리만 보면 접힘과 기울기를 구별할 수 없어 비율이 조금 틀어지는데,
     #: 판형을 알면 그 자유도가 사라진다. "auto"면 잰 값을 그대로 쓴다.

@@ -21,6 +21,8 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .content import content_bounds
+
 #: 경계 곡선을 다항식으로 맞출 때의 차수. 책 테두리는 완만해서 3차면 충분하다.
 POLY_DEG = 3
 #: 곡선 피팅 잔차가 해당 변 길이의 이 비율을 넘으면 경계를 믿지 않는다.
@@ -33,8 +35,6 @@ MAX_ENVELOPE_PUSH = 0.06
 #: 한 변에서 잘라낼 수 있는 최대 비율. 마스크가 아무리 안쪽을 가리켜도 이 이상은
 #: 안 자른다. 배경과 종이 색이 비슷하면 GrabCut이 페이지 안쪽을 배경으로 오인한다.
 MAX_TRIM_FRACTION = 0.10
-#: 글자가 있는 행/열로 인정할 최소 잉크 비율
-INK_ROW_RATIO = 0.005
 #: 맵은 성기게 만들어 늘린다. 매끄러운 맵이라 손실이 없고 메모리를 크게 아낀다.
 MAP_GRID = 512
 
@@ -109,33 +109,6 @@ def _fit(values: np.ndarray, lo: int, hi: int, span: float,
     return smooth.astype(np.float32), residual, abs(shift) / max(span, 1.0)
 
 
-def _content_bounds(bgr: np.ndarray) -> tuple[int, int, int, int]:
-    """글자가 실제로 존재하는 범위 (위, 아래, 왼쪽, 오른쪽).
-
-    재단이 여기를 넘어 들어오지 못하게 막는 안전선이다. 배경과 종이 색이 비슷하면
-    GrabCut이 페이지 안쪽을 배경으로 오인하는데(사진 01에서 제목이 잘렸다),
-    글자는 국소 대비로 잡히므로 이 선은 그런 실패에 휘둘리지 않는다.
-    """
-    h, w = bgr.shape[:2]
-    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    scale = 800 / max(h, w)
-    if scale < 1.0:
-        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
-    sh, sw = gray.shape[:2]
-    # 어두운 글자만 찾으면 색지 위 흰 글자를 놓친다 (실제로 그 때문에 컬러 간지의
-    # 큰 제목이 잘렸다). 국소 대비의 절댓값을 보면 두 극성이 다 잡힌다.
-    blur = cv2.GaussianBlur(gray, (0, 0), 3.0)
-    binary = np.abs(gray.astype(np.float32) - blur.astype(np.float32)) > 12.0
-    rows = binary.mean(axis=1) > INK_ROW_RATIO
-    cols = binary.mean(axis=0) > INK_ROW_RATIO
-    if not rows.any() or not cols.any():
-        return 0, h - 1, 0, w - 1
-    r = np.where(rows)[0]
-    c = np.where(cols)[0]
-    return (int(r[0] / sh * h), int(r[-1] / sh * h),
-            int(c[0] / sw * w), int(c[-1] / sw * w))
-
-
 def _corners(mask: np.ndarray) -> np.ndarray | None:
     """마스크 윤곽에서 네 모서리를 고른다 (좌표합·좌표차 최소/최대)."""
     cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -191,7 +164,7 @@ def _erase_background(bgr: np.ndarray, mask: np.ndarray) -> np.ndarray:
     if w <= 16 or h <= 16:
         return out
     # 여기서도 글자를 자르면 안 된다
-    ink_t, ink_b, ink_l, ink_r = _content_bounds(bgr)
+    ink_t, ink_b, ink_l, ink_r = content_bounds(bgr)
     x0, y0 = min(x, ink_l), min(y, ink_t)
     x1, y1 = max(x + w, ink_r + 1), max(y + h, ink_b + 1)
     x0, y0 = max(0, x0), max(0, y0)
@@ -258,7 +231,7 @@ def trim_to_book(bgr: np.ndarray, mask: np.ndarray | None,
     # 두 겹의 안전선으로 곡선이 안쪽으로 파고드는 걸 막는다.
     #   1) 글자가 있는 곳은 절대 못 넘어온다
     #   2) 그와 별개로 한 변에서 잘라낼 수 있는 양 자체를 제한한다
-    ink_t, ink_b, ink_l, ink_r = _content_bounds(bgr)
+    ink_t, ink_b, ink_l, ink_r = content_bounds(bgr)
     lim_v, lim_h = h * MAX_TRIM_FRACTION, w * MAX_TRIM_FRACTION
     top_v = np.minimum(fits[0][0], min(ink_t, lim_v))
     bot_v = np.maximum(fits[1][0], max(ink_b, h - 1 - lim_v))

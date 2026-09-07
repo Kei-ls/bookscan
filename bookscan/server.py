@@ -259,6 +259,7 @@ class ReprocessBody(BaseModel):
     trim: bool | None = None
     detector: str | None = None
     spread: str | None = None
+    spine: str | None = None
     gutter: float | None = None
     brightness: int | None = None
     contrast: int | None = None
@@ -307,6 +308,10 @@ async def reprocess(sid: str, body: ReprocessBody) -> dict:
         if body.spread not in ("auto", "single", "split"):
             raise HTTPException(400, f"알 수 없는 분할 설정: {body.spread}")
         st.spread = body.spread
+    if body.spine is not None:
+        if body.spine not in ("auto", "left", "right", "none"):
+            raise HTTPException(400, f"알 수 없는 책등 설정: {body.spine}")
+        st.spine = body.spine
     if body.brightness is not None:
         st.brightness = int(body.brightness)
     if body.contrast is not None:

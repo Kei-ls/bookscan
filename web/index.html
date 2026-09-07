@@ -100,6 +100,22 @@
           </div>
         </div>
 
+        <div class="field">
+          <label>책등 쪽</label>
+          <div class="seg" id="spineSeg">
+            <button data-spine="auto">자동</button>
+            <button data-spine="left">왼쪽</button>
+            <button data-spine="right">오른쪽</button>
+            <button data-spine="none">낱장</button>
+          </div>
+          <p class="hint small">책등 쪽 변만 다르게 다룹니다. 거기는 종이가 끝나는
+            자리가 아니라 접혀 들어가는 자리라 찾을 경계가 없어서, 검출이 본문
+            안쪽으로 흘러내려 글자를 자르곤 합니다. 어느 변인지 알면 살짝 바깥으로
+            밀어 그걸 막습니다 — 넘어가 봐야 같은 책의 종이라 손해가 없습니다.
+            <b>자동은 근거가 얕으면 기권합니다</b>(페이지를 꽉 채워 찍으면 판단 근거가
+            사진 밖에 있습니다). 한 쪽씩 찍는다면 직접 골라주세요.</p>
+        </div>
+
         <div class="field" id="gutterField">
           <label>책등 위치 <span id="gutterVal" class="mono"></span></label>
           <input id="gutterRange" type="range" min="20" max="80" step="1">

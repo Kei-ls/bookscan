@@ -182,6 +182,8 @@ function syncControls() {
     b.classList.toggle("on", b.dataset.mode === st.mode));
   document.querySelectorAll("#spreadSeg button").forEach((b) =>
     b.classList.toggle("on", b.dataset.spread === st.spread));
+  document.querySelectorAll("#spineSeg button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.spine === (st.spine || "auto")));
   $("#autoRotateToggle").checked = st.auto_rotate !== false;
   $("#trimToggle").checked = st.trim !== false;
   syncDetectorSelect(st.detector || "classic");
@@ -297,6 +299,10 @@ canvas.addEventListener("pointermove", (e) => {
 document.querySelectorAll("#modeSeg button").forEach((b) => b.onclick = () => {
   state.editing.settings.mode = b.dataset.mode; syncControls();
 });
+document.querySelectorAll("#spineSeg button").forEach((b) => b.onclick = () => {
+  state.editing.settings.spine = b.dataset.spine; syncControls();
+});
+
 document.querySelectorAll("#spreadSeg button").forEach((b) => b.onclick = () => {
   state.editing.settings.spread = b.dataset.spread; syncControls();
 });
@@ -353,7 +359,8 @@ $("#applyEdit").onclick = async () => {
         corners: state.editing.corners.length === 4 ? state.editing.corners : null,
         mode: st.mode, rotate: st.rotate, auto_rotate: st.auto_rotate,
         dewarp: st.dewarp, curve: st.curve, trim: st.trim, detector: st.detector,
-        spread: st.spread, gutter: st.spread === "single" ? null : st.gutter,
+        spread: st.spread, spine: st.spine || "auto",
+        gutter: st.spread === "single" ? null : st.gutter,
         paper: st.paper || "auto",
         brightness: st.brightness, contrast: st.contrast,
       }),

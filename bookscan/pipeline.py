@@ -16,8 +16,10 @@ import numpy as np
 
 from .bookmask import book_mask
 from .booktrim import trim_to_book
-from .config import MAX_OUTPUT_LONG_EDGE, WORK_LONG_EDGE, PageSettings
-from .detect import Detection, detect_page
+from .config import (MAX_OUTPUT_LONG_EDGE, SINGLE_PAGE_ASPECT, WORK_LONG_EDGE,
+                     PageSettings)
+from .content import guard_quad, push_sides
+from .detect import Detection, detect_page, order_corners
 from .dewarp import dewarp
 from .enhance import enhance
 from .imgio import fit_long_edge, rotate90
@@ -25,7 +27,8 @@ from .models import get as get_model
 from .models import ready as model_ready
 from .models import segment as model_segment
 from .orient import estimate_axis
-from .pagecurve import CURVE_POINTS, detect_curve
+from .pagecurve import CURVE_POINTS, detect_curve, guard_content, shift_sides
+from . import spine as spine_mod
 from .spread import SpreadResult, detect_gutter, split_spread
 from .warp import (clamp_corners, curved_maps, fit_paper, remap_mask, warp_curved,
                    warp_mask, warp_page, warp_transform)
@@ -53,6 +56,31 @@ class ProcessResult:
     #: 곡선 보정을 실제로 적용했을 때, 그때 쓴 테두리 폐곡선 (원본 좌표계).
     #: 편집 화면에 겹쳐 그려서 "무엇을 폈는지" 눈으로 확인할 수 있게 한다.
     outline: list[list[float]] | None = None
+
+
+def _aspect_note(image: np.ndarray) -> str:
+    """낱장 한 쪽치고 비율이 이상하면 경고 문구. 멀쩡하면 빈 문자열.
+
+    한 쪽씩만 찍는다는 전제가 서면 결과 비율이 좁은 띠 안에 들어와야 한다.
+    벗어났다는 건 크롭이 페이지와 어긋났다는 뜻이고, 그 원인은 대개 둘 중
+    하나다 — 옆 페이지가 딸려 들어왔거나, 페이지 한쪽이 잘려 나갔거나.
+
+    **고치지 않고 알리기만 한다.** 넓게 잡힌 크롭을 비율만 맞춰 눌러도 옆
+    페이지는 그대로 남고 글자만 찌그러진다. 무엇이 이상한지 짚어주는 게 여기서
+    할 수 있는 정직한 일이다.
+    """
+    h, w = image.shape[:2]
+    if h < 16 or w < 16:
+        return ""
+    have = w / h
+    lo, hi = SINGLE_PAGE_ASPECT
+    if have > hi:
+        return (f"가로세로비 {have:.2f} — 한 쪽치고 넓습니다 "
+                f"(보통 {lo:.2f}~{hi:.2f}). 옆 페이지가 딸려 들어왔는지 확인하세요")
+    if have < lo:
+        return (f"가로세로비 {have:.2f} — 한 쪽치고 좁습니다 "
+                f"(보통 {lo:.2f}~{hi:.2f}). 페이지가 잘려 나갔는지 확인하세요")
+    return ""
 
 
 def process(original: np.ndarray, settings: PageSettings | None = None) -> ProcessResult:
@@ -86,6 +114,42 @@ def process(original: np.ndarray, settings: PageSettings | None = None) -> Proce
         notes.append(f"검출: {det.method} (confidence {det.confidence:.2f})")
         if det.method == "fallback":
             notes.append("페이지를 찾지 못해 사진 전체를 사용 — 코너를 직접 잡아주세요")
+        # 사각형이 글자를 물고 있으면 여기서 넓혀 둔다. 아래 책 마스크와 굽은
+        # 테두리가 모두 이 사각형을 씨앗으로 쓰므로, 고치려면 여기가 먼저다.
+        # 수동 지정 코너는 건드리지 않는다 — 사용자가 끌어다 놓은 자리가 답이다.
+        guarded, gnote = guard_quad(work, det.corners * scale)
+        if gnote:
+            det = Detection(guarded / scale, det.confidence, det.method)
+            notes.append("본문 보호: " + gnote)
+
+    # --- 2b. 책등 쪽 변 (나머지 셋과 다르게 다룰 변 하나) ---
+    # 여기는 종이가 끝나는 자리가 아니라 접혀 들어가는 자리다. 찾을 단차가 없고,
+    # 그래서 검출도 마스크도 이 변에서만 안쪽으로 흘러내린다. 살짝 바깥으로 밀어
+    # 둔다 — 넘어가 봐야 같은 책의 종이라 배경이 딸려오지 않는데, 모자라면
+    # 글자가 잘리고 그건 되돌릴 수 없다.
+    sp = spine_mod.detect(work, det.corners * scale, st.spine)
+    notes.append(sp.reason)
+    quad_w = 0.0
+    if sp.index is not None:
+        q = order_corners((det.corners * scale).astype(np.float32))
+        qw = float(max(np.linalg.norm(q[1] - q[0]), np.linalg.norm(q[2] - q[3])))
+        qh = float(max(np.linalg.norm(q[3] - q[0]), np.linalg.norm(q[2] - q[1])))
+        margin = qw * spine_mod.SAFETY_MARGIN
+        # 이미 한 쪽치고 넓다면 밀지 않는다. 이 여백은 "책등 쪽 변이 안쪽으로
+        # 흘러내린다"는 전제 위에 서 있는데, 넓게 잡힌 사각형은 그 반대로
+        # 틀린 것이라(옆 페이지를 문 경우) 밀면 더 나빠지기만 한다. 어느 쪽으로
+        # 틀렸는지는 책등을 직접 찾아야 알 수 있고, 그건 아직 못 한다.
+        if qh > 1e-6 and (qw + margin) / qh > SINGLE_PAGE_ASPECT[1]:
+            notes.append(f"책등 쪽 여백 생략 — 사각형이 이미 한 쪽보다 넓음 "
+                         f"(가로세로비 {qw / qh:.2f})")
+        else:
+            quad_w = qw
+            pushes = [0.0, 0.0, 0.0, 0.0]
+            pushes[sp.index] = margin
+            det = Detection(push_sides(q, tuple(pushes)) / scale,
+                            det.confidence, det.method)
+            notes.append(f"책등 쪽({spine_mod.SIDE_LABELS[sp.index]}) 변을 "
+                         f"{margin / scale:.0f}px 바깥으로 — 글자가 잘리는 걸 막는다")
 
     # --- 3. 책 영역 마스크 ---
     # 사각형은 펼친 책을 정확히 담지 못한다. 실제 실루엣을 따로 따서 두 군데에
@@ -110,6 +174,19 @@ def process(original: np.ndarray, settings: PageSettings | None = None) -> Proce
         except Exception:
             curve = None
         notes.append("테두리: " + (curve.reason if curve is not None else "곡선을 찾지 못함 — 원근 보정만"))
+        # 여기가 글자를 지키는 마지막 자리다. `warp_curved`는 이 곡선 안쪽만
+        # 떠오므로, 넘어가면 잘린 획을 되찾을 방법이 없다.
+        if curve is not None and curve.curved:
+            curve, cnote = guard_content(work, curve)
+            if cnote:
+                notes.append("본문 보호: " + cnote)
+            # 곡선은 사각형을 씨앗으로 다시 찾은 것이라, 위에서 민 것과 무관하게
+            # 또 흘러내려 있을 수 있다. 같은 여백을 여기서 한 번 더 준다.
+            if sp.side is not None and quad_w > 0:
+                d = [0.0, 0.0, 0.0, 0.0]  # 위, 아래, 왼쪽, 오른쪽
+                d[2 if sp.side == "left" else 3] = quad_w * spine_mod.SAFETY_MARGIN
+                curve = shift_sides(curve, tuple(d))
+                notes.append("책등 쪽 테두리도 같은 만큼 바깥으로")
 
     # --- 5. 원근 보정 (마스크도 같은 변환을 태운다) ---
     # 곡선이 실제로 휘어 있을 때만 곡선 워프를 쓴다. 평평하면 지금까지처럼
@@ -186,6 +263,11 @@ def process(original: np.ndarray, settings: PageSettings | None = None) -> Proce
             max_long_edge=MAX_OUTPUT_LONG_EDGE)
         if paper_note:
             part.notes.append(paper_note)
+        # 쪼개지 않은 펼침면은 애초에 두 쪽이라 이 잣대가 맞지 않는다.
+        if part.half is not None or not sp.is_spread:
+            warn = _aspect_note(part.image)
+            if warn:
+                part.notes.append("확인 필요: " + warn)
         part.image = enhance(
             part.image,
             mode=st.mode,

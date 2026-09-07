@@ -39,6 +39,7 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 
+from .content import ink_mask, outward_normal, side_push
 from .detect import order_corners
 
 #: 곡선 하나를 몇 점으로 표현할 것인가. 완만한 곡선이라 이 정도면 차고 넘친다.
@@ -390,6 +391,54 @@ def _stitch(curves: list[np.ndarray]) -> list[np.ndarray]:
 
     return [ramp(top, tl, tr), ramp(bottom, bl, br),
             ramp(left, tl, bl), ramp(right, tr, br)]
+
+
+def shift_sides(curve: PageCurve, dists: tuple[float, float, float, float]) -> PageCurve:
+    """네 곡선을 각자의 바깥 방향으로 평행이동하고 모서리를 다시 맞춘다.
+
+    `dists`는 (위, 아래, 왼쪽, 오른쪽) 순. 휘어짐(`bows`)은 직선 성분을 뺀 값이라
+    평행이동으로 달라지지 않으므로 그대로 물려준다.
+    """
+    sides = [curve.top, curve.bottom, curve.left, curve.right]
+    center = np.concatenate(sides).mean(axis=0)
+    moved = [c + outward_normal(c[0], c[-1], center)[None, :] * d
+             for c, d in zip(sides, dists)]
+    top, bottom, left, right = _stitch(moved)
+    return PageCurve(top, bottom, left, right, curve.bows, curve.source,
+                     curve.curved, curve.reason)
+
+
+def guard_content(bgr: np.ndarray, curve: PageCurve) -> tuple[PageCurve, str]:
+    """테두리가 글자를 가로지르면 그 변을 바깥으로 민다. (테두리, 사유).
+
+    여기가 이 안전선이 꼭 있어야 하는 자리다. `warp.warp_curved`는 이 곡선
+    **안쪽만** 떠오므로, 곡선이 글자를 자르고 지나가면 그 획은 결과 이미지에
+    아예 존재하지 않게 된다. `booktrim`의 같은 이름의 안전선은 이미 떠온
+    이미지에서 자르는 상자를 넓힐 뿐이라 여기까지는 손이 닿지 않는다.
+
+    변마다 하나의 거리로 평행이동만 한다. 휘어짐(`bows`)은 직선 성분을 뺀 값이라
+    평행이동으로 달라지지 않으므로 그대로 물려준다. 어긋난 모서리는 `_stitch`가
+    다시 맞춘다.
+    """
+    ink, scale = ink_mask(bgr, long_edge=None)
+    sides = [curve.top, curve.bottom, curve.left, curve.right]
+    scaled = [c * scale for c in sides]
+    center = np.concatenate(scaled).mean(axis=0)
+
+    span_v = float(np.linalg.norm(scaled[1].mean(axis=0) - scaled[0].mean(axis=0)))
+    span_h = float(np.linalg.norm(scaled[3].mean(axis=0) - scaled[2].mean(axis=0)))
+    perps = (span_v, span_v, span_h, span_h)  # top, bottom, left, right
+
+    dists = [side_push(ink, c[0], c[-1], outward_normal(c[0], c[-1], center),
+                       max(24.0, perp)) / scale
+             for c, perp in zip(scaled, perps)]
+    if not any(d > 0 for d in dists):
+        return curve, ""
+
+    names = ("위", "아래", "왼쪽", "오른쪽")
+    moved = ", ".join(f"{names[i]} {dists[i]:.0f}px" for i in range(4) if dists[i] > 0)
+    return (shift_sides(curve, tuple(dists)),
+            f"글자를 자르지 않도록 테두리를 넓힘 ({moved})")
 
 
 def detect_curve(bgr: np.ndarray, quad: np.ndarray,
